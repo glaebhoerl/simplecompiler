@@ -1,0 +1,293 @@
+TITLE: Compiling first-class functions as programs at runtime
+
+ABSTRACT:
+A difficult problem when writing a program with the goal of high performance is if some crucial input or parameter only becomes known at runtime, but if the program uses that input in its computations as a completely unknown dynamic value, it is undesirably inefficient. An example for illustration is calculations such as matrix multiplication which can implemented and compiled more efficiently when the size of the matrix is known at compile time, but where, unfortunately, the matrix and its size only become known at runtime.
+
+The usual solution to this problem at present is to use techniques such as staged compilation and program generation (forms of metaprogramming), where the program constructs a second program at runtime, building the parameters and input it has received into it, and then compiles and executes the result. The drawback of this approach is that it requires the first program to construct the second one at a syntactic level: instead of writing the code for an algorithm directly, one must write code to construct the syntactic representation of a program which will perform the algorithm, which is unwieldy.
+
+We implement a compiler for a small language with first-class functions, in which the compiler itself is available as a runtime function `compile: (a -> b) -> (a -> b)`, which interprets a function value together with its closed-over environment as a program, where the values in the environment are now "known at compile time", and recompiles it into a form where those values have been directly inlined and specialized into the resulting function's code. This `compile` function is semantically the identity function, but the returned function will execute faster than the one that was passed in. With this available, it is sufficient to write the code for an algorithm directly and wrap it up in a function value partially applying it to the input, and pass that to `compile`, instead of having to deal with syntactic representations. We will evaluate the effectiveness of this approach by benchmarking small programs written in our language, comparing cases where a given input is handled as a runtime value "normally", where the same value is inlined into the source code of the program by hand, and where the input is handled as a runtime value but optimized using `compile`.
+
+
+Problem: specializing program on values you receive at runtime
+Current solutions: metaprogramming, staging, program generation
+Problem with those: Syntactic
+Our solution: compile :: (a -> b) -> (a -> b)
+Investigate with benchmarks etc.
+
+Re-opening Closures
+Andrew W. Appel
+https://www.cs.princeton.edu/~appel/papers/reo.pdf
+
+NEXT WEEK
+  Think through use cases
+    Start writing example programs / test cases (pseudo-code)
+  Dev environment
+  Compile something with LLVM bindings
+
+CONSTRAINTS
+  Compiler has to work as both
+    Command-line application
+    Library loaded into the compiled application (hopefully statically?)
+  Compiler has to be able to work with input of both
+    Text files containing source code
+    Closures/values in memory with the ABI of the compiled program
+  Compiler has to able to produce output of both
+    Binary executable programs (and/or libraries)
+    In-memory functions with the ABI of the compiled program
+      (this, in turn, must include its "source", just all other compiled functions!)
+
+Is this related to NBE by any chance?
+  Literals are related to normal forms...
+  We have
+    (compilerBackend :: Literal -> Value)
+    quote :: Value -> Literal
+    runTheProgram :: Expr ->  Value ??
+
+PLAN:
+  Make a "vertical" prototype first, then expand "horizontally"
+  I.e. first make the smallest possible thing working "all the way through", then add more features and capabilities
+    This extends to the whole thesis
+    Get to a "minimum viable thesis" first, then extend/improve it as time allows
+  Dynamically typed, or a simple static type system (e.g. no polymorphism)?
+    The type of `compile` itself would have be polymorphic(?), but we could just handle it as a primitive
+  What types do we want? Functions... ints, structs, arrays, bool, enums? Depends on the use cases!
+    At first just: int and function(int) -> int? or do we need function(a) -> a?
+  At first just stdin, stdout, stderr, error code as interface to external world?
+  -----
+  Compiler in Haskell with llvm-hs
+  Separate frontend and backend
+  Backend linked into compiled application
+    foreign exports a `compile` function taking UnserIR (in what format?) as input
+      (not a ptr to the closure itself! conversion to UnserIR happens on the generated-code side of things, at least according to the current plan)
+      returns a C pointer to the compiled function
+      the compiled program will contain a shim function around `compile()` to do the UnserIR conversions and stuff
+  Stages: Source --Lex--> Syntax --Parse--> AST --Check--> UnserIR --Trans--> LLVM IR --LLVM--> Machine code
+                 ^^^^^^^^^^^^^^^^^FRONTEND^^^^^^^^^^^^^^^^         ^^^^^^^^^^^BACKEND^^^^^^^^^^^
+  At a negative offset from the machine code of generated functions, we store a pointer to a description table
+    Contains two things:
+      * UnserIR of the function (in some format.. can we avoid having to serialize/deserialize?)
+        * Can we use compact regions for this?
+          * Seems like yes, but it's only in GHC 8.2
+            * But it'll be released in June?
+              * But it seems to only work for FilePaths not Ptrs/ByteStrings...
+              * And it requires "info table" pointers to be in the exact same place, not sure this is satisfied btwn run of compiler vs. program
+        * If we want to be hardcore we could probably define some binary encoding and machinery around it on the Haskell side that works on it directly,
+          w/o an explicit serialize/deserialize step, maybe making it nicer with view patterns + pattern synonyms
+        * But let's just do some dumb & easy serialization at first
+      * For each of its parameters, a pointer to a function that translates that type to a literal in UnserIR
+        * QUESTION: How does this work for user-defined and generic types?
+          Where do these functions "live"? When/how are they generated??
+            Presumably we would generate AST or UnserIR for them (kinda like type class instances) and codegen it normally
+        * For closures this will be precisely steps 1-3 below!
+          * For functions embedded in structs, the function code itself will still need to be emitted globally and we just store the ptr!
+            * Or is this only a concern at LLVM IR level not UnserIR?
+          * Note: Unlike other types, closures on the heap may have cycles, need to handle it!
+            * This will be codegenned as mutual recursion.
+            * (Or heck, what about single recursion - is that any easier?)
+            * Is it possible for a variable in a closure's environment to contain, somewhere within it, (a ptr/ref to) the closure itself?
+          * Heck: broader problem: sharing!!
+            * Three basic strategies:
+              A. No sharing. Each literal is duplicated in the UnserIR as many times as it is referred to.
+              B. Preserve sharing. Shared objects become `let`s, and objects occur the UnserIR exactly as many times as in the runtime object graph.
+              C. Maximize sharing. All objects are hashed and refer to each other by hash. Each unique term occurs in the UnserIR only once.
+                * (Subquestion: what does "equivalent" mean. Syntactic equality? Alpha-equality?)
+            * I am predisposed towards B. How do we do it?
+              * How far can we leverage reference counting?
+              * At a minimum we can do:
+                * If RC == 1, the term is translated in-place (as if A.)
+                * We keep a Set<Pointer> of already-translated objects
+                * If RC > 1, we look the pointer up in the set
+                  * If it exists, nothing more to do
+                  * If it doesn't, translate the `let`, and add the pointer to the set
+                    * How do we ensure `let`s are scoped correctly? Just make everything a global?
+                  * The name of the let becomes the numeric value of the pointer, which uniquely and globally identifies it
+              * Is there any way we can avoid having to keep even the auxiliary Set structure around?
+            * We might also just implement all three and make it a parameter. For testing/benchmarking if nothing else.
+          * What about "not actually closures" but pointers to static fns with an empty env?
+            * Do we also recompile their IR? Or just leave them as a plain fn call?
+            * What about fn calls to static fns as part of the code of recompiled fns?
+            * Probably these should be exposed as options
+              * Hmm... is there any way to give LLVM some extra IR with instructions to "inline this maybe, but don't actually compile it"?
+        * Mutable references: we need to put it into the generated code by-pointer, not its contents!
+          * So the we probably just turn it into a pointer literal.
+          * Hmmm... and we need to bump the reference count!!
+            * By how much?? Can we know / control it?
+            * Or maybe we just need to represent it as a function which bumps the reference count and returns the pointer.
+              * Do we need to do this for other things besides references? Theoretically no, because other types are by-value...
+   Algorithm of `compile()` function:
+     1. Get description table of fn ptr
+     2. For each argument available in the env, call the corresponding fn ptr to translate it to UnserIR
+        2a. Given the environment may contain closures, this process is recursive!
+     3. Transform the IR of the fn to take N fewer arguments, and replace them with global constants containing results from step 2
+     4. Invoke the compiler backend on the resulting IR in JIT mode
+       4a. Needs to contain the description table and ptr to it as well!
+     5. Return the resulting fn ptr
+   Hmm... maybe we shouldn't actually restrict it to type `(a -> b) -> (a -> b)`! Like augustss said, `a -> a` instead.
+     Like what if you want to partially apply / optimize multiple functions at the same time, e.g. a whole (e.g. linear algebra) API?
+     Put them in a record and pass that in.
+     So it'll compile any functions anywhere inside the structure that was passed to it.
+       On the output end, we should re-construct any function-less "outer structure" directly in the program instead of recompiling it into a static literal (would be kind of pointless)?
+         Though might be interesting to see if that works at all.
+         And if there's no functions in it anywhere I guess we should skip that step entirely?
+         We should also try to preserve sharing with the original structure where possible.
+       If we use the "full sharing" option this could be used to optimize memory usage even if no functions are involved.
+   QUESTION: when do we init/deinit the GHC runtime? Does a static constructor handle this for us?
+   How do we persuade LLVM to try to inline everything into the entry point fn (and not vice versa)?
+   Memory management:
+     Is there any way to determine whether a pointer points into static memory or the heap?
+       Maybe: https://stackoverflow.com/a/35206941
+     If yes we can use this to call the JIT's deallocation fn on the code ptr when deallocing closures iff it points to heap.
+       Although... we'd need to keep a reference count too? :\
+       Does the reference count always match that of the env?
+         Actually there isn't an env. So we can repurpose the env ptr as a ptr to a refcount?
+         Unless we can get LLVM to put a reference count next to the machine code for us.
+     Potential problem: if the JITed memory contains static/global variables, and other variables referring to them outlive the JITted closure itself
+       Closure dies -> whole JITted memory is deallocated -> including the global/static variables in it -> use after free
+       Solution 1: the reference count of the static variables redirects to the reference count for the whole JITted memory itself
+         This can lead to "memory leaks" in the cases where use-after-free would otherwise have resulted
+       Solution 2: instead of global variables, just make them let-bound at the beginning of the function, or inline at each use site
+         Can we tell LLVM not to turn things into globals even as an optimization? (Would it want to do that otherwise?)
+       Solution 3: instead of storing a static T, store a static Rc<T>, that is the JITted memory just has one reference to the global variable instead of owning it
+         Can we attach a 'static destructor' to the JITted memory to make it decrement the reference counts of the statics when it is deallocated??
+         If not, is there any reasonable way accomplish it manually?
+         This seems like a nice solution provided that we actually want globals.
+         The question from S.2. still applies here!
+   > Whoa, how does the JIT know about sin and cos? The answer is surprisingly simple: in this example, the JIT started execution of a function and got to a function call. It realized that the function was not yet JIT compiled and invoked the standard set of routines to resolve the function. In this case, there is no body defined for the function, so the JIT ended up calling dlsym("sin") on the Kaleidoscope process itself. Since "sin" is defined within the JIT's address space, it simply patches up calls in the module to call the libm version of sin directly.
+   > The LLVM JIT provides a number of interfaces for controlling how unknown functions get resolved. It allows us to establish explicit mappings between IR objects and addresses (useful for LLVM global variables that we want to map to static tables, for example), allows us to dynamically decide on the fly based on the function name, and even allows us JIT compile functions lazily the first time they're called.
+
+BLAH
+  Can also take full advantage of all CPU-specific instructions!!!
+    This is the case even for functions that have already "been compiled at compile time" (it's worthwhile to recompile them)
+    http://www.agner.org/optimize/blog/read.php?i=167
+    Might this be relevant? https://ispc.github.io/
+      ispc compiles a C-based SPMD programming language to run on the SIMD units of CPUs and the Intel Xeon Phi™ architecture; it frequently provides a 3x or more speedup on CPUs with 4-wide vector SSE units and 5x-6x on CPUs with 8-wide AVX vector units, without any of the difficulty of writing intrinsics code. Parallelization across multiple cores is also supported by ispc, making it possible to write programs that achieve performance improvement that scales by both number of cores and vector unit size.
+
+CLI: optparse-applicative? there seem to be many options here!
+
+LEXING: inchworm? (scanner, lexer-applicative?)
+
+PARSING: Earley, grammatical-parsers, trifecta?
+  Earley maybe...?
+  Attribute Grammars?? https://www.reddit.com/r/haskell/comments/6j6dtd/uu_attribute_grammar_manual/
+  http://teh.id.au/posts/2017/06/07/round-trip-property/index.html
+    round trip hedgehog/quickcheck properties for testing parsing <-> pp
+
+PRETTY PRINTING
+  https://hackage.haskell.org/package/prettyprinter
+
+NAME MANAGEMENT: either zabt or bound
+
+SOURCE LOCATIONS: `loc` seems the nicest!
+  also: srcloc, located
+
+AST manipulation: lens?
+
+UNIFICATION: monad-unify, unification-fd, cmu? other? handroll?
+  we won't need this for a while(?)
+
+IR REPRESENTATION: CPS, SSA, ANF, Join Points, Sea-of-Nodes, Thorin, ...?
+  ANF with join points sounds good! (~SSA with basic block arguments)
+  mid-level semantic operations like clone (refcount+-), borrow, move should be explicitly represented here
+  nominal types -> structural types (struct, enum, function, generic, abstract, recursive, array, ref, other primitives..)
+  do we also want to represent indirections explicitly?
+  presumably not enum discriminants or refcount fields and things like that?
+  how do we deal with structs (unordered fields) vs tuples (ordered fields) if we want to do automatic reordering for the former?
+    do we want to do the reordering beforehand, so IR only has a single kind of struct?
+    what about the case of structural sums, where we'd want/need a discriminant of fixed size, unlike named enums?
+  if the IR has a closed universe of types, can we actually put (part/most of) the `quote` operation in the compiler...?
+
+OPTIMIZATION: Hoopl?
+  Does it work with ANFj?
+  Are there any competitors?
+  Can we use this for CFG analysis and checking as well? instead of just optimization?
+  http://blog.ezyang.com/2011/04/hoopl-guided-tour-base-system/
+
+SERIALIZATION: store, flat, cereal? (packman?)
+
+OTHER
+  generic-lens
+  reflection, dependent-map, prim-uniq, tie-knot
+  hashtables{,-plus}, keys, unordered-containers, hamtmap, disjoint-sets-st
+  unordered-graphs, algebraic-graphs
+  static-hash. quickset, perfecthash/PerfectHash
+  intern
+  (transformations, TTTAS, syntactic, ho-rewriting)
+  (hindley-milner, boomerang, cassette)
+  https://github.com/ermine-language/ermine/blob/master/ermine.cabal
+
+MEMORY MANAGEMENT
+  Reference counting? Just leak?
+  Just leak at first, if necessary or time allows do something more
+
+USE CASES
+  Linear algebra (vector/matrix stuff)
+  Parsers
+  Interpreters?
+  GUI loaded from XML?
+  "Ágens alapú szimuláció"? Van Ndb agent amik csinálnak dolgokat, őket szimuláljuk, a számuk-viselkedésük futásidőben jön
+  "Agent-based simulation"? Simulating N agents which do stuff, their number and behavior is determined at runtime
+  Network protocol written in XML, evolving(?)
+  A router, the packet switching rules change dynamically
+  Unreal Editor
+  Software raytracing + effects (Pali, Open Shading Language)
+  Neural networks
+  Specializing parallel code dynamically for the available hardware/resources (splitting-into-blocks, number of threds, cache sizes etc.)
+  Equation solver, expression evaluator
+  Data processing, e.g. grep
+    We can first semantically "compile" the source expression into an `a -> b` function that's "algorithmically optimal"(?), and then call `compile`/`optimize` on that!
+      i.o.w. the kinds of optimizations we'd otherwise perform syntactically, we can perform internally w/ plain function-based transformations?
+    The crucial difference is this:
+      Suppose we have `grep :: String -> ([String] -> [String])`
+      `grep "foo"` can be either (a) a "no-op" partial application, OR (b) it can do actual work and return a `[String] -> [String]` that's optimal for grepping "foo"!
+        In the latter case, `optimize (grep "foo")` has an easier job and just needs to turn virtual calls into static ones and inline stuff, not actually partially evaluate anything
+    Suppose a `compile`d closure also makes static function calls. Do we also "ASTify" and re-compile *those*? That would potentially be the whole program! Is it possible & sufficient to use the same inlining heuristics as at "normal compile time" and only reconsider the source code of the statically called functions in that case?
+    Hmm the runtime-compiled code will need to be memory managed somehow too
+  database queries
+  FRP
+  constructive solid geometry
+  Unification/substituation in DT typechecker?
+
+BENCHMARK:
+  * Program written to take runtime input
+  * Program with the "runtime input" hardwired into `main()`
+  * Program with the "runtime input" hand-specialized into the relevant functions
+  * Program written to take runtime input, but partially applying and `compile()`ing it at runtime
+    * When the `compile`d function is just a top-level function partially applied to an argument
+    * When the `compile`d function is a pre-generated in-memory structure of nested closures etc.
+  * Program written in different language (C, C++, Rust?)
+https://reviews.llvm.org/rL303769
+
+(BENEFIT: Turn runtime values into static ones and dynamic calls into static calls, inlining, specialization(?), etc)
+
+RELATED WORK
+  http://compilers.cs.uni-saarland.de/papers/gpce15.pdf How related is this?? (Impala)
+
+SIMILAR TECH
+  Template metaprogramming
+    Eigen
+  Stream fusion?
+    Not really the same thing...?
+    Rewrite rules are more of a "has synergy" thing?
+      Rewrite rules only work with statically-visible things, here we make more things "statically-visible"
+  Macros, Template Haskell, staging?
+  Terra? Julia? LMS?
+
+Optimization in the frontend?
+  Inlining
+  Specialization-on-values
+  Rewrite rules?
+  (Reference counting elision?)
+
+CRAZY IDEAS (future directions):
+ * *Cross-compiling*?? (to GPU)
+ * Render function as source code program?
+   * for debugging, print to file, serialization of functions, sending them over network, ...
+     (but normally the `compile()` function would be the compiler's backend, not its frontend...)
+     (hmm, that's OK for serialization, but not debugging)
+ * Futamura projections
+ * Hmm... if this runtime recompiles/optimizes code, might there be anything analogous for data/types?
+   * Relatedly or not??, how might this interact with the "intensional type analysis" representation of polymorphism?
+     * Well, at a minimum, if a polymorphic function's been applied to a type, that is, if a function's been partially applied to
+       its size and offset parameters, then those'll be optimized away. Yay.
+     * I wonder if there's more to it...
+
