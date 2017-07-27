@@ -291,22 +291,3 @@ CRAZY IDEAS (future directions):
        its size and offset parameters, then those'll be optimized away. Yay.
      * I wonder if there's more to it...
 
-FIRST
-  two types: Int, Bool
-  arithmetic and comparison operators
-  `if`. `while`? `forever`/`break`? as expressions?
-  `let`
-  `read()`, `write()`
-  mutation (assignment)? type annotations? strings?
-  no functions yet
-
-Example program:
-    var n = 0
-    forever {
-        write(n)
-        let m = read()
-        if m == 0 {
-            return
-        }
-        n = n + m
-    }
