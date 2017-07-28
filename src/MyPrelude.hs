@@ -1,7 +1,9 @@
-module MyPrelude (Text, module Control.Applicative, module MyPrelude) where
+module MyPrelude (module MyPrelude, module Reexports) where
 
-import Control.Applicative
-import Data.Text (Text)
+import Prelude             as Reexports hiding (foldl)
+import Control.Applicative as Reexports
+import Data.Foldable       as Reexports (foldl')
+import Data.Text           as Reexports (Text)
 
 todo :: a
 todo = error "TODO"
@@ -13,7 +15,7 @@ liftA1 :: Applicative f => (a -> b) -> f a -> f b
 liftA1 = fmap
 
 oneOf :: Alternative f => [f a] -> f a
-oneOf = foldl (<|>) empty
+oneOf = foldl' (<|>) empty
 
 data ArithmeticOperator = Add | Sub | Mul | Div | Mod deriving (Eq, Show)
 

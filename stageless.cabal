@@ -43,6 +43,7 @@ executable stageless
                        MultiParamTypeClasses,
                        NamedFieldPuns,
                        NegativeLiterals,
+                       NoImplicitPrelude,
                        OverloadedStrings,
                        PartialTypeSignatures,
                        PatternSynonyms,
