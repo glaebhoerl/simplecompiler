@@ -7,23 +7,25 @@ import qualified Token as T
 
 type Name = Text
 
-data Expression = Name !Name
-                | Literal !Integer
-                | UnaryOperator !UnaryOperator !Expression
-                | BinaryOperator !BinaryOperator !Expression !Expression
-                deriving (Eq, Show)
+data Expression
+    = Name           !Name
+    | Literal        !Integer
+    | UnaryOperator  !UnaryOperator  !Expression
+    | BinaryOperator !BinaryOperator !Expression !Expression
+    deriving (Eq, Show)
 
-data Statement = Let !Name !Expression
-               | Var !Name !Expression
-               | Assign !Name !Expression
-               | IfThen !Expression ![Statement]
-               | IfThenElse !Expression ![Statement] ![Statement]
-               | Forever ![Statement]
-               | While !Expression ![Statement]
-               | Return !Expression
-               | Break
-               | Write !Expression
-               deriving (Eq, Show)
+data Statement
+    = Let        !Name        !Expression
+    | Var        !Name        !Expression
+    | Assign     !Name        !Expression
+    | IfThen     !Expression  ![Statement]
+    | IfThenElse !Expression  ![Statement] ![Statement]
+    | Forever    ![Statement]
+    | While      !Expression  ![Statement]
+    | Return     !Expression
+    | Break
+    | Write      !Expression
+    deriving (Eq, Show)
 
 type Expected = Text
 

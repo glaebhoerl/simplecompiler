@@ -17,12 +17,35 @@ liftA1 = fmap
 oneOf :: Alternative f => [f a] -> f a
 oneOf = foldl' (<|>) empty
 
-data ArithmeticOperator = Add | Sub | Mul | Div | Mod deriving (Eq, Show)
+data ArithmeticOperator
+    = Add
+    | Sub
+    | Mul
+    | Div
+    | Mod
+    deriving (Eq, Show)
 
-data ComparisonOperator = Less | LessEqual | Greater | GreaterEqual | Equal | NotEqual deriving (Eq, Show)
+data ComparisonOperator
+    = Less
+    | LessEqual
+    | Greater
+    | GreaterEqual
+    | Equal
+    | NotEqual
+    deriving (Eq, Show)
 
-data LogicalOperator = And | Or deriving (Eq, Show)
+data LogicalOperator
+    = And
+    | Or
+    deriving (Eq, Show)
 
-data BinaryOperator = ArithmeticOperator !ArithmeticOperator | ComparisonOperator !ComparisonOperator | LogicalOperator !LogicalOperator deriving (Eq, Show)
+data BinaryOperator
+    = ArithmeticOperator !ArithmeticOperator
+    | ComparisonOperator !ComparisonOperator
+    | LogicalOperator    !LogicalOperator
+    deriving (Eq, Show)
 
-data UnaryOperator = Not | Negate deriving (Eq, Show)
+data UnaryOperator
+    = Not
+    | Negate
+    deriving (Eq, Show)
