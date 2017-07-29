@@ -17,13 +17,18 @@ liftA1 = fmap
 oneOf :: Alternative f => [f a] -> f a
 oneOf = foldl' (<|>) empty
 
+class Enumerable a where
+    enumerate :: [a]
+    default enumerate :: (Enum a, Bounded a) => [a]
+    enumerate = [minBound..maxBound]
+
 data ArithmeticOperator
     = Add
     | Sub
     | Mul
     | Div
     | Mod
-    deriving (Eq, Show)
+    deriving (Eq, Show, Enum, Bounded, Enumerable)
 
 data ComparisonOperator
     = Less
@@ -32,12 +37,12 @@ data ComparisonOperator
     | GreaterEqual
     | Equal
     | NotEqual
-    deriving (Eq, Show)
+    deriving (Eq, Show, Enum, Bounded, Enumerable)
 
 data LogicalOperator
     = And
     | Or
-    deriving (Eq, Show)
+    deriving (Eq, Show, Enum, Bounded, Enumerable)
 
 data BinaryOperator
     = ArithmeticOperator !ArithmeticOperator
@@ -45,7 +50,10 @@ data BinaryOperator
     | LogicalOperator    !LogicalOperator
     deriving (Eq, Show)
 
+instance Enumerable BinaryOperator where
+    enumerate = map ArithmeticOperator enumerate ++ map ComparisonOperator enumerate ++ map LogicalOperator enumerate
+
 data UnaryOperator
     = Not
     | Negate
-    deriving (Eq, Show)
+    deriving (Eq, Show, Enum, Bounded, Enumerable)
