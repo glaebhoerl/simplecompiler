@@ -1,5 +1,6 @@
 module Token where
 
+import Data.Char (isAlpha, isAlphaNum, isDigit)
 import qualified Data.Text   as Text
 import qualified Text.Earley as E
 
@@ -104,10 +105,10 @@ data Token
 instance TextRepresentation Token where
     toText = \case
         Keyword        keyword -> toText keyword
-        Name           name    -> toText name
-        BinaryOperator op      -> toText op
-        UnaryOperator  op      -> toText op
+        BinaryOperator binop   -> toText binop
+        UnaryOperator  unop    -> toText unop
         Bracket'       bracket -> toText bracket
+        Name           name    -> toText name
         Number         number  -> toText number
         EqualsSign             -> "="
         Comma                  -> ","
@@ -116,14 +117,71 @@ instance TextRepresentation Token where
 
 type Expected = Text
 
-type Prod    r = E.Prod r Expected Char [Token]
-type Grammar r = E.Grammar r (Prod r)
+type Prod    r output = E.Prod r Expected Char output
+type Grammar r output = E.Grammar r (Prod r output)
 
-tokensGrammar :: Grammar r
-tokensGrammar = do
-    keyword <- E.rule (E.satisfy (\word -> elem word (map (drop 2 . show) (enumerate @Keyword))))
+matchRepresentable :: TextRepresentation a => a -> Prod r a
+matchRepresentable a = do
+    _ <- E.listLike (toText a)
+    return a
 
-    return todo
+match :: (Enumerable a, TextRepresentation a) => (a -> Token) -> Prod r Token
+match toToken = liftA1 toToken (oneOf (map matchRepresentable enumerate))
 
-tokenize :: Text -> [Token]
-tokenize = todo
+whitespace :: Prod r Char
+whitespace = oneOf (map E.token [' ', '\n'])
+
+whitespaced :: Prod r output -> Prod r output
+whitespaced inner = do
+    _      <- whitespace
+    output <- inner
+    _      <- whitespace
+    return output
+
+orUnderscore :: (Char -> Bool) -> (Char -> Bool)
+orUnderscore f = \c -> f c || (c == '_')
+
+literal :: Token -> Prod r Token
+literal token = do
+    _ <- E.listLike (toText token)
+    return token
+
+name :: Prod r Text
+name = do
+    first <- (E.satisfy (orUnderscore isAlpha))
+    rest  <- (zeroOrMore (E.satisfy (orUnderscore isAlphaNum)))
+    return (Text.pack (first : rest))
+
+number :: Prod r Integer
+number = do
+    minusSign <- zeroOrOne (E.token '-')
+    digits    <- oneOrMore (E.satisfy isDigit)
+    return (read (minusSign ++ digits))
+
+token :: Prod r Token
+token = oneOf [
+            match Keyword,
+            whitespaced (match BinaryOperator),
+            match UnaryOperator,
+            match Bracket',
+            liftA1 Name name,
+            liftA1 Number number,
+            whitespaced (literal EqualsSign),
+            literal Comma,
+            literal Semicolon,
+            literal Newline
+        ]
+
+tokens :: Prod r [Token]
+tokens = do
+    _    <- zeroOrMore whitespace
+    toks <- zeroOrMore $ do
+        tok <- token
+        _   <- zeroOrMore whitespace
+        return tok
+    return toks
+
+tokenize :: Text -> Maybe [Token]
+tokenize text = case fst (E.fullParses (E.parser (E.rule tokens)) text) of
+    (parse:_) -> Just parse
+    []        -> Nothing

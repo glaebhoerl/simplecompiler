@@ -1,6 +1,6 @@
 module MyPrelude (module MyPrelude, module Reexports) where
 
-import Prelude             as Reexports hiding (foldl)
+import Prelude             as Reexports hiding (foldl, (++))
 import Control.Applicative as Reexports
 import Data.Foldable       as Reexports (foldl')
 import Data.Text           as Reexports (Text)
@@ -16,6 +16,18 @@ liftA1 = fmap
 
 oneOf :: Alternative f => [f a] -> f a
 oneOf = foldl' (<|>) empty
+
+zeroOrOne :: Alternative f => f a -> f [a]
+zeroOrOne a = liftA0 [] <|> liftA1 (\x -> [x]) a
+
+oneOrMore :: Alternative f => f a -> f [a]
+oneOrMore = some
+
+zeroOrMore :: Alternative f => f a -> f [a]
+zeroOrMore = many
+
+(++) :: Monoid a => a -> a -> a
+(++) = mappend
 
 class Enumerable a where
     enumerate :: [a]

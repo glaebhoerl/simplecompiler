@@ -1,7 +1,7 @@
 module Main where
 
 import MyPrelude
-import qualified Token
+import qualified Token as T
 import qualified AST
 
 {-
@@ -26,7 +26,17 @@ Example program:
     }
 -}
 
+example :: Text
+example =
+    "var n = 0\n" ++
+    "forever {\n" ++
+    "    write(n)\n" ++
+    "    let m = read()\n" ++
+    "    if m == 0 {\n" ++
+    "        return\n" ++
+    "    }\n" ++
+    "    n = n + m\n" ++
+    "}\n"
 
 main :: IO ()
-main = do
-  putStrLn "hello world"
+main = print (T.tokenize example)
