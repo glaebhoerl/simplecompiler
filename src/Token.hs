@@ -108,8 +108,8 @@ instance TextRepresentation Token where
         BinaryOperator binop   -> toText binop
         UnaryOperator  unop    -> toText unop
         Bracket'       bracket -> toText bracket
-        Name           name    -> toText name
-        Number         number  -> toText number
+        Name           name'   -> toText name'
+        Number         number' -> toText number'
         EqualsSign             -> "="
         Comma                  -> ","
         Semicolon              -> ";"
@@ -138,13 +138,13 @@ whitespaced inner = do
     _      <- whitespace
     return output
 
+literal :: Token -> Prod r Token
+literal tok = do
+    _ <- E.listLike (toText tok)
+    return tok
+
 orUnderscore :: (Char -> Bool) -> (Char -> Bool)
 orUnderscore f = \c -> f c || (c == '_')
-
-literal :: Token -> Prod r Token
-literal token = do
-    _ <- E.listLike (toText token)
-    return token
 
 name :: Prod r Text
 name = do
@@ -152,36 +152,39 @@ name = do
     rest  <- (zeroOrMore (E.satisfy (orUnderscore isAlphaNum)))
     return (Text.pack (first : rest))
 
+nameOrKeyword :: Text -> Token
+nameOrKeyword text = case lookup text (map (\keyword -> (toText keyword, keyword)) (enumerate @Keyword)) of
+    Just keyword -> Keyword keyword
+    Nothing      -> Name text
+
 number :: Prod r Integer
 number = do
     minusSign <- zeroOrOne (E.token '-')
     digits    <- oneOrMore (E.satisfy isDigit)
     return (read (minusSign ++ digits))
 
-token :: Prod r Token
-token = oneOf [
-            match Keyword,
-            whitespaced (match BinaryOperator),
-            match UnaryOperator,
-            match Bracket',
-            liftA1 Name name,
-            liftA1 Number number,
-            whitespaced (literal EqualsSign),
-            literal Comma,
-            literal Semicolon,
-            literal Newline
-        ]
-
-tokens :: Prod r [Token]
-tokens = do
-    _    <- zeroOrMore whitespace
-    toks <- zeroOrMore $ do
-        tok <- token
-        _   <- zeroOrMore whitespace
-        return tok
+tokens :: Grammar r [Token]
+tokens = mdo
+    spaces     <- E.rule (liftA1 (const []) (oneOrMore (E.token ' ')))
+    stringlike <- E.rule (liftA1 single (oneOf [liftA1 nameOrKeyword name, liftA1 Number number]))
+    fixed      <- E.rule (liftA1 single (oneOf
+        [whitespaced (match BinaryOperator),
+        match UnaryOperator,
+        match Bracket',
+        whitespaced (literal EqualsSign),
+        literal Comma,
+        literal Semicolon,
+        literal Newline]))
+    spacesRec     <- E.rule (oneOf [spaces,     liftA2 (++) spaces     stringlikeRec, liftA2 (++) spaces     fixedRec])
+    stringlikeRec <- E.rule (oneOf [stringlike, liftA2 (++) stringlike fixedRec,      liftA2 (++) stringlike spacesRec])
+    fixedRec      <- E.rule (oneOf [fixed,      liftA2 (++) fixed      spacesRec,     liftA2 (++) fixed      stringlikeRec, liftA2 (++) fixed fixedRec])
+    toks          <- E.rule (oneOf [spacesRec, stringlikeRec, fixedRec])
     return toks
 
-tokenize :: Text -> Maybe [Token]
-tokenize text = case fst (E.fullParses (E.parser (E.rule tokens)) text) of
-    (parse:_) -> Just parse
-    []        -> Nothing
+data Error = Invalid | Ambiguous [[Token]] deriving Show
+
+tokenize :: Text -> Either Error [Token]
+tokenize text = case fst (E.fullParses (E.parser tokens) text) of
+    []      -> Left  Invalid
+    [parse] -> Right parse
+    more    -> Left  (Ambiguous more)

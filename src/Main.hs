@@ -3,6 +3,8 @@ module Main where
 import MyPrelude
 import qualified Token as T
 import qualified AST
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 
 {-
 FIRST
@@ -13,30 +15,21 @@ FIRST
   `read()`, `write()`
   mutation (assignment)? type annotations? strings?
   no functions yet
-
-Example program:
-    var n = 0
-    forever {
-        write(n)
-        let m = read()
-        if m == 0 {
-            return
-        }
-        n = n + m
-    }
 -}
 
 example :: Text
 example =
-    "var n = 0\n" ++
-    "forever {\n" ++
-    "    write(n)\n" ++
-    "    let m = read()\n" ++
-    "    if m == 0 {\n" ++
-    "        return\n" ++
-    "    }\n" ++
-    "    n = n + m\n" ++
-    "}\n"
+    "var n = 0"          ++ "\n" ++
+    "forever {"          ++ "\n" ++
+    "    write(n)"       ++ "\n" ++
+    "    let m = read()" ++ "\n" ++
+    "    if m == 0 {"    ++ "\n" ++
+    "        return"     ++ "\n" ++
+    "    }"              ++ "\n" ++
+    "    n = n + m"      ++ "\n" ++
+    "}"
 
 main :: IO ()
-main = print (T.tokenize example)
+main = do
+    a <- Text.getContents
+    print (T.tokenize a)

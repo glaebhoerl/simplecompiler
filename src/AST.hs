@@ -43,26 +43,25 @@ ruleCases :: [Prod r output] -> Grammar r output
 ruleCases cases = E.rule (oneOf cases)
 
 expressionGrammar :: Grammar r Expression
-expressionGrammar = do
-    rec
-        atom <- ruleCases [liftA1 Name    (E.terminal (\case T.Name   n -> Just n; _ -> Nothing)),
-                           liftA1 Literal (E.terminal (\case T.Number n -> Just n; _ -> Nothing)),
-                           bracketed T.Round logicals]
+expressionGrammar = mdo
+    atom <- ruleCases [liftA1 Name    (E.terminal (\case T.Name   n -> Just n; _ -> Nothing)),
+                        liftA1 Literal (E.terminal (\case T.Number n -> Just n; _ -> Nothing)),
+                        bracketed T.Round logicals]
 
-        unary <- ruleCases [liftA2 UnaryOperator (E.terminal (\case T.UnaryOperator op -> Just op; _ -> Nothing)) atom,
-                            atom]
+    unary <- ruleCases [liftA2 UnaryOperator (E.terminal (\case T.UnaryOperator op -> Just op; _ -> Nothing)) atom,
+                        atom]
 
-        mulDivMod  <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Mul, Div, Mod] -> Just binop; _ -> Nothing)) mulDivMod unary,
-                                unary]
+    mulDivMod  <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Mul, Div, Mod] -> Just binop; _ -> Nothing)) mulDivMod unary,
+                            unary]
 
-        arithmetic <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Add, Sub]      -> Just binop; _ -> Nothing)) arithmetic mulDivMod,
-                                 mulDivMod]
+    arithmetic <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Add, Sub]      -> Just binop; _ -> Nothing)) arithmetic mulDivMod,
+                                mulDivMod]
 
-        comparisons <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@ComparisonOperator{} -> Just binop; _ -> Nothing)) comparisons arithmetic,
-                                  arithmetic]
+    comparisons <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@ComparisonOperator{} -> Just binop; _ -> Nothing)) comparisons arithmetic,
+                                arithmetic]
 
-        logicals <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@LogicalOperator{} -> Just binop; _ -> Nothing)) logicals comparisons,
-                               comparisons]
+    logicals <- ruleCases [liftA3 BinaryOperator (E.terminal (\case T.BinaryOperator binop@LogicalOperator{} -> Just binop; _ -> Nothing)) logicals comparisons,
+                            comparisons]
     return logicals
 
 statementGrammar :: Grammar r Statement

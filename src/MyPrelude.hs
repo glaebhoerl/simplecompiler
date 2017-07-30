@@ -8,6 +8,9 @@ import Data.Text           as Reexports (Text)
 todo :: a
 todo = error "TODO"
 
+single :: a -> [a]
+single = \a -> [a]
+
 liftA0 :: Applicative f => a -> f a
 liftA0 = pure
 
@@ -18,7 +21,7 @@ oneOf :: Alternative f => [f a] -> f a
 oneOf = foldl' (<|>) empty
 
 zeroOrOne :: Alternative f => f a -> f [a]
-zeroOrOne a = liftA0 [] <|> liftA1 (\x -> [x]) a
+zeroOrOne a = liftA0 [] <|> liftA1 single a
 
 oneOrMore :: Alternative f => f a -> f [a]
 oneOrMore = some
