@@ -163,6 +163,8 @@ number = do
     digits    <- oneOrMore (E.satisfy isDigit)
     return (read (minusSign ++ digits))
 
+-- FIXME BUGS:
+-- unary negation is ambiguous with both negative literals and binary negation :(
 tokens :: Grammar r [Token]
 tokens = mdo
     spaces     <- E.rule (liftA1 (const []) (oneOrMore (E.token ' ')))
@@ -185,6 +187,6 @@ data Error = Invalid | Ambiguous [[Token]] deriving Show
 
 tokenize :: Text -> Either Error [Token]
 tokenize text = case fst (E.fullParses (E.parser tokens) text) of
-    []      -> Left  Invalid
-    [parse] -> Right parse
-    more    -> Left  (Ambiguous more)
+    []    -> Left  Invalid
+    [one] -> Right one
+    more  -> Left  (Ambiguous more)

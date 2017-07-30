@@ -32,4 +32,8 @@ example =
 main :: IO ()
 main = do
     a <- Text.getContents
-    print (T.tokenize a)
+    let tokenized = T.tokenize a
+    print tokenized
+    case tokenized of
+        Right tokens -> print (AST.parse tokens)
+        _ -> return ()
