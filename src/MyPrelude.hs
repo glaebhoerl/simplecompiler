@@ -1,12 +1,17 @@
 module MyPrelude (module MyPrelude, module Reexports) where
 
-import Prelude             as Reexports hiding (foldl, (++))
+import Prelude             as Reexports hiding (foldl, (++), head)
 import Control.Applicative as Reexports
 import Data.Foldable       as Reexports (foldl')
 import Data.Text           as Reexports (Text)
 
 todo :: a
-todo = error "TODO"
+todo = error "TODO I should use HasCallStack here"
+
+head :: [a] -> Maybe a
+head = \case
+    []  -> Nothing
+    a:_ -> Just a
 
 single :: a -> [a]
 single = \a -> [a]

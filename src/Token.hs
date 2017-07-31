@@ -50,6 +50,7 @@ instance TextRepresentation UnaryOperator where
 
 data Keyword
     = K_break
+    | K_else
     | K_let
     | K_forever
     | K_if
