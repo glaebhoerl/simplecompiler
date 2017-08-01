@@ -1,9 +1,10 @@
 module MyPrelude (module MyPrelude, module Reexports) where
 
-import Prelude             as Reexports hiding (foldl, (++), head)
+import Prelude             as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, foldl, (++), head)
+import Data.Text.IO        as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile)
+import Data.Text           as Reexports        (Text)
 import Control.Applicative as Reexports
-import Data.Foldable       as Reexports (foldl')
-import Data.Text           as Reexports (Text)
+import Data.Foldable       as Reexports        (foldl')
 
 todo :: a
 todo = error "TODO I should use HasCallStack here"
