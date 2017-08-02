@@ -51,13 +51,15 @@ instance TextRepresentation UnaryOperator where
 data Keyword
     = K_break
     | K_else
-    | K_let
     | K_forever
     | K_if
+    | K_let
     | K_return
     | K_var
     | K_while
-    deriving (Eq, Show, Enum, Bounded, Enumerable)
+    deriving (Eq, Show, Enum, Bounded)
+
+instance Enumerable Keyword
 
 instance TextRepresentation Keyword where
     toText = Text.pack . drop 2 . show
@@ -66,12 +68,16 @@ data BracketKind
     = Round
     | Curly
     | Square
-    deriving (Eq, Show, Enum, Bounded, Enumerable)
+    deriving (Eq, Show, Enum, Bounded)
+
+instance Enumerable BracketKind
 
 data BracketDirection
     = Open
     | Close
-    deriving (Eq, Show, Enum, Bounded, Enumerable)
+    deriving (Eq, Show, Enum, Bounded)
+
+instance Enumerable BracketDirection
 
 data Bracket = Bracket {
     bracketKind      :: !BracketKind,

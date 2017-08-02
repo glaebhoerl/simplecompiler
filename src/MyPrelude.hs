@@ -49,7 +49,9 @@ data ArithmeticOperator
     | Mul
     | Div
     | Mod
-    deriving (Eq, Show, Enum, Bounded, Enumerable)
+    deriving (Eq, Show, Enum, Bounded)
+
+instance Enumerable ArithmeticOperator
 
 data ComparisonOperator
     = Less
@@ -58,12 +60,16 @@ data ComparisonOperator
     | GreaterEqual
     | Equal
     | NotEqual
-    deriving (Eq, Show, Enum, Bounded, Enumerable)
+    deriving (Eq, Show, Enum, Bounded)
+
+instance Enumerable ComparisonOperator
 
 data LogicalOperator
     = And
     | Or
-    deriving (Eq, Show, Enum, Bounded, Enumerable)
+    deriving (Eq, Show, Enum, Bounded)
+
+instance Enumerable LogicalOperator
 
 data BinaryOperator
     = ArithmeticOperator !ArithmeticOperator
@@ -77,4 +83,6 @@ instance Enumerable BinaryOperator where
 data UnaryOperator
     = Not
     | Negate
-    deriving (Eq, Show, Enum, Bounded, Enumerable)
+    deriving (Eq, Show, Enum, Bounded)
+
+instance Enumerable UnaryOperator

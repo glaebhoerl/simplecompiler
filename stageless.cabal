@@ -26,7 +26,6 @@ executable stageless
                        ConstraintKinds,
                        DataKinds,
                        DefaultSignatures,
-                       DeriveAnyClass,
                        DeriveFoldable,
                        DeriveFunctor,
                        DeriveGeneric,
@@ -58,7 +57,7 @@ executable stageless
                        TypeOperators,
                        TypeSynonymInstances,
                        ViewPatterns
--- NOTABLY MISSING: CPP, FunctionalDependencies, RecordWildCards, RoleAnnotations, TemplateHaskell, TypeInType, UndecidableInstances, UndecidableSuperClasses
+-- NOTABLY MISSING: CPP, DeriveAnyClass, FunctionalDependencies, RecordWildCards, RoleAnnotations, TemplateHaskell, TypeInType, UndecidableInstances, UndecidableSuperClasses
   build-depends:       base >= 4.7 && < 5,
                        bound,
                        bytestring,
