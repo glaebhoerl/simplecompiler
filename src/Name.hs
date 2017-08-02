@@ -2,8 +2,8 @@ module Name where
 
 import MyPrelude
 
-import qualified Data.Set as Set
-import Data.Set (Set)
+import qualified Data.Map as Map
+import Data.Map (Map)
 import qualified Control.Monad.Trans.State.Strict as M
 import qualified Control.Monad.Trans.Except       as M
 
@@ -14,9 +14,16 @@ import AST (AST)
 type Path = [Int]
 
 data Name = Name {
-    path :: Path,
-    name :: Text
-} deriving (Eq, Ord, Show)
+    path        :: Path,
+    name        :: Text,
+    bindingType :: AST.BindingType
+} deriving Show
+
+instance Eq Name where
+    n1 == n2 = (path n1, name n1) == (path n2, name n2)
+
+instance Ord Name where
+    compare n1 n2 = compare (path n1, name n1) (path n1, name n2)
 
 data Error
     = NameNotFound    Text Path
@@ -26,18 +33,17 @@ data Error
 class Monad m => NameResolveM m where
     lookupName :: Text -> m Name
     inNewScope :: m a  -> m a
-    bindName   :: Text -> m Name
+    bindName   :: AST.BindingType -> Text -> m Name
 
 -- TODO maybe use Natural and NonEmpty here
-type Context = [(Int, Set Text)]
+type Context = [(Int, Map Text AST.BindingType)]
 
-findInContext :: Text -> Context -> Maybe Path
+findInContext :: Text -> Context -> Maybe Name
 findInContext name = \case
     [] -> Nothing
-    ((_, names):parent) ->
-        if Set.member name names
-            then Just (map fst parent)
-            else findInContext name parent
+    ((_, names) : parent) -> case Map.lookup name names of
+        Nothing    -> findInContext name parent
+        Just btype -> Just (Name (map fst parent) name btype)
 
 newtype NameResolve a = NameResolve {
     runNameResolve :: M.StateT Context (M.Except Error) a
@@ -47,11 +53,11 @@ instance NameResolveM NameResolve where
     lookupName name = NameResolve $ do
         context <- M.get
         case findInContext name context of
-            Just path -> return (Name path name)
-            Nothing   -> lift (M.throwE (NameNotFound name (map fst context)))
+            Just found -> return found
+            Nothing    -> lift (M.throwE (NameNotFound name (map fst context)))
 
     inNewScope action = NameResolve $ do
-        M.modify' (prepend (0, Set.empty))
+        M.modify' (prepend (0, Map.empty))
         result <- runNameResolve action
         M.modify' (assert . tail)
         context <- M.get
@@ -61,26 +67,26 @@ instance NameResolveM NameResolve where
             (scopeID, names) : rest -> (scopeID + 1, names) : rest
         return result
 
-    bindName name = NameResolve $ do
+    bindName btype name = NameResolve $ do
         context <- M.get
-        when (Set.member name (snd (assert (head context)))) $ do
+        when (Map.member name (snd (assert (head context)))) $ do
             lift (M.throwE (NameWouldShadow name (map fst context)))
         M.put $ case context of
             []                      -> bug "No scopes!"
-            (scopeID, names) : rest -> (scopeID, Set.insert name names) : rest
-        return (Name (map fst (assert (tail context))) name)
+            (scopeID, names) : rest -> (scopeID, Map.insert name btype names) : rest
+        return (Name (map fst (assert (tail context))) name btype)
 
 resolveNames :: AST Text -> Either Error (AST Name)
-resolveNames ast = M.runExcept (M.evalStateT (runNameResolve (resolveNamesM ast)) [(0, Set.empty)])
+resolveNames ast = M.runExcept (M.evalStateT (runNameResolve (resolveNamesM ast)) [(0, Map.empty)])
 
 resolveNamesM :: NameResolveM m => AST Text -> m (AST Name)
 resolveNamesM = mapM resolveStatementM
 
 resolveStatementM :: NameResolveM m => AST.Statement Text -> m (AST.Statement Name)
 resolveStatementM = \case
-    AST.Binding btype name expr -> do -- TODO make use of `btype`
+    AST.Binding btype name expr -> do
         resolvedExpr <- resolveExpressionM expr
-        fullName <- bindName name
+        fullName <- bindName btype name
         return (AST.Binding btype fullName resolvedExpr)
     AST.Assign name expr -> do
         resolvedName <- lookupName name
