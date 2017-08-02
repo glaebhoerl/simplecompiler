@@ -20,14 +20,16 @@ data BindingType = Let | Var deriving (Eq, Show)
 data Statement name
     = Binding    !BindingType       !name              !(Expression name)
     | Assign     !name              !(Expression name)
-    | IfThen     !(Expression name) ![Statement name]
-    | IfThenElse !(Expression name) ![Statement name]  ![Statement name]
-    | Forever    ![Statement name]
-    | While      !(Expression name) ![Statement name]
+    | IfThen     !(Expression name) !(Block name)
+    | IfThenElse !(Expression name) !(Block name)      !(Block name)
+    | Forever    !(Block name)
+    | While      !(Expression name) !(Block name)
     | Return     !(Maybe (Expression name))
     | Break
     | Write      !(Expression name)
     deriving (Eq, Show)
+
+newtype Block name = Block { body :: [Statement name] } deriving (Eq, Show)
 
 type Expected = Text
 
@@ -94,8 +96,8 @@ expressionGrammar = mdo
     return logicals
 
 -- FIXME: this newline eating is ugly as fuck, how can I do something better?
-statementsGrammar :: Grammar r [Statement Text]
-statementsGrammar = mdo
+blockGrammar :: Grammar r (Block Text)
+blockGrammar = mdo
     expression <- expressionGrammar
     block <- E.rule (bracketed T.Curly statements)
     let keyword kw = E.token (T.Keyword kw)
@@ -163,10 +165,10 @@ statementsGrammar = mdo
         _ <- eatNewlines
         s <- oneOrMoreStatements
         _ <- eatNewlines
-        return s
+        return (Block s)
     return statements
 
-type AST name = [Statement name]
+type AST = Block
 
 data Error
     = Invalid   Int [Expected] [T.Token]
@@ -174,7 +176,7 @@ data Error
     deriving Show
 
 parse :: [T.Token] -> Either Error (AST Text)
-parse tokens = case E.fullParses (E.parser statementsGrammar) tokens of
+parse tokens = case E.fullParses (E.parser blockGrammar) tokens of
     ([], E.Report a b c) -> Left (Invalid a b c)
     ([one], _) -> Right one
     (more,  _) -> Left (Ambiguous more)
