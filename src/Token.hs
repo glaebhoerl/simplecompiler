@@ -1,10 +1,10 @@
 module Token where
 
+import MyPrelude
+
 import Data.Char (isAlpha, isAlphaNum, isDigit)
 import qualified Data.Text   as Text
 import qualified Text.Earley as E
-
-import MyPrelude
 
 class TextRepresentation a where
     toText :: a -> Text
@@ -190,7 +190,10 @@ tokens = mdo
     toks          <- E.rule (oneOf [spacesRec, stringlikeRec, fixedRec])
     return toks
 
-data Error = Invalid | Ambiguous [[Token]] deriving Show
+data Error
+    = Invalid
+    | Ambiguous [[Token]]
+    deriving Show
 
 tokenize :: Text -> Either Error [Token]
 tokenize text = case fst (E.fullParses (E.parser tokens) text) of

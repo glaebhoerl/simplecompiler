@@ -1,33 +1,32 @@
 module AST where
 
+import MyPrelude
+
 import qualified Text.Earley as E
 
-import MyPrelude
 import qualified Token as T
 
-type Name = Text
-
-data Expression
-    = Name           !Name
+data Expression name
+    = Name           !name
     | Literal        !Integer
-    | UnaryOperator  !UnaryOperator !Expression
-    | BinaryOperator !Expression    !BinaryOperator  !Expression
+    | UnaryOperator  !UnaryOperator     !(Expression name)
+    | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
     | Read
     deriving (Eq, Show)
 
 data BindingType = Let | Var deriving (Eq, Show)
 
 -- TODO: add "plain blocks"
-data Statement
-    = Binding    !BindingType !Name        !Expression
-    | Assign     !Name        !Expression
-    | IfThen     !Expression  ![Statement]
-    | IfThenElse !Expression  ![Statement] ![Statement]
-    | Forever    ![Statement]
-    | While      !Expression  ![Statement]
-    | Return     !(Maybe Expression)
+data Statement name
+    = Binding    !BindingType       !name              !(Expression name)
+    | Assign     !name              !(Expression name)
+    | IfThen     !(Expression name) ![Statement name]
+    | IfThenElse !(Expression name) ![Statement name]  ![Statement name]
+    | Forever    ![Statement name]
+    | While      !(Expression name) ![Statement name]
+    | Return     !(Maybe (Expression name))
     | Break
-    | Write      !Expression
+    | Write      !(Expression name)
     deriving (Eq, Show)
 
 type Expected = Text
@@ -53,7 +52,7 @@ eatNewlines = liftA1 (const ()) (zeroOrMore (E.token T.Newline))
 
 -- TODO: I should specify the precedence levels declaratively somehow and figure out how to generate the grammar from that
 -- TODO: eat newlines here too
-expressionGrammar :: Grammar r Expression
+expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
     atom        <- ruleCases [liftA1 Name
                                      (E.terminal (\case T.Name   n -> Just n; _ -> Nothing)),
@@ -95,14 +94,10 @@ expressionGrammar = mdo
     return logicals
 
 -- FIXME: this newline eating is ugly as fuck, how can I do something better?
-statementsGrammar :: Grammar r [Statement]
+statementsGrammar :: Grammar r [Statement Text]
 statementsGrammar = mdo
     expression <- expressionGrammar
-    block <- E.rule $ do
-        _    <- E.token (T.Bracket' (T.Bracket T.Curly T.Open))
-        body <- statements
-        _    <- E.token (T.Bracket' (T.Bracket T.Curly T.Close))
-        return body
+    block <- E.rule (bracketed T.Curly statements)
     let keyword kw = E.token (T.Keyword kw)
     -----------------------------------------------------------
     binding <- E.rule $ do
@@ -162,7 +157,7 @@ statementsGrammar = mdo
         _     <- oneOrMore (oneOf [E.token T.Semicolon, E.token T.Newline])
         rest  <- oneOrMoreStatements
         return (first : rest)
-    oneOrMoreStatements <- E.rule $ oneOf [liftA1 single oneStatement, moreStatements]
+    oneOrMoreStatements <- E.rule (oneOf [liftA1 single oneStatement, moreStatements])
     -- FIXME: this doesn't accept empty blocks but rn idgaf
     statements <- E.rule $ do
         _ <- eatNewlines
@@ -171,9 +166,14 @@ statementsGrammar = mdo
         return s
     return statements
 
-data Error = Invalid Int [Expected] [T.Token] | Ambiguous [[Statement]] deriving Show
+type AST name = [Statement name]
 
-parse :: [T.Token] -> Either Error [Statement]
+data Error
+    = Invalid   Int [Expected] [T.Token]
+    | Ambiguous [AST Text]
+    deriving Show
+
+parse :: [T.Token] -> Either Error (AST Text)
 parse tokens = case E.fullParses (E.parser statementsGrammar) tokens of
     ([], E.Report a b c) -> Left (Invalid a b c)
     ([one], _) -> Right one

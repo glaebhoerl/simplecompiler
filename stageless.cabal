@@ -16,7 +16,7 @@ cabal-version:       >=1.10
 executable stageless
   hs-source-dirs:      src
   main-is:             Main.hs
-  other-modules:       MyPrelude, Token, AST
+  other-modules:       MyPrelude, Token, AST, Name
   default-language:    Haskell2010
   default-extensions:  ApplicativeDo,
                        AutoDeriveTypeable,
@@ -67,7 +67,8 @@ executable stageless
                        llvm-hs-pure,
                        loc,
                        prettyprinter,
-                       text
+                       text,
+                       transformers
   ghc-options:         -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
 
 source-repository head
