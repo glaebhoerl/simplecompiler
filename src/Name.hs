@@ -23,7 +23,7 @@ instance Eq Name where
     n1 == n2 = (path n1, name n1) == (path n2, name n2)
 
 instance Ord Name where
-    compare n1 n2 = compare (path n1, name n1) (path n1, name n2)
+    compare n1 n2 = compare (path n1, name n1) (path n2, name n2)
 
 data Error
     = NameNotFound    Text Path
@@ -65,20 +65,22 @@ instance NameResolveM NameResolve where
         M.modify' (assert . tail)
         context <- M.get
         case context of
-            [] -> return ()
             (scopeID, names) : rest -> do
                 assertM (scopeID >= 0)
                 M.put ((scopeID + 1, names) : rest)
-        return result
+                return result
+            [] -> do
+                return result
 
     bindName btype name = NameResolve $ do
         context <- M.get
-        when (Map.member name (snd (assert (head context)))) $ do
-            lift (M.throwE (NameWouldShadow name (map fst context)))
-        M.put $ case context of
-            []                      -> bug "Attempted to bind a name when not in a scope!"
-            (scopeID, names) : rest -> (scopeID, Map.insert name btype names) : rest
-        return (Name (map fst (assert (tail context))) name btype)
+        case context of
+            [] -> bug "Attempted to bind a name when not in a scope!"
+            (scopeID, names) : rest -> do
+                when (Map.member name names) $ do
+                    lift (M.throwE (NameWouldShadow name (map fst context)))
+                M.put ((scopeID, Map.insert name btype names) : rest)
+                return (Name (map fst rest) name btype)
 
 resolveNames :: AST Text -> Either Error (AST Name)
 resolveNames ast = M.runExcept (M.evalStateT (runNameResolve (resolveNamesIn ast)) [])
