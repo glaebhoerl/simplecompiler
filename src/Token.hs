@@ -103,6 +103,7 @@ data Token
     | UnaryOperator  !UnaryOperator
     | Bracket'       !Bracket
     | Number         !Integer
+    | Text           !Text
     | EqualsSign
     | Comma
     | Semicolon
@@ -117,6 +118,7 @@ instance TextRepresentation Token where
         Bracket'       bracket -> toText bracket
         Name           name'   -> toText name'
         Number         number' -> toText number'
+        Text           text'   -> toText text'
         EqualsSign             -> "="
         Comma                  -> ","
         Semicolon              -> ";"
@@ -160,15 +162,22 @@ name = do
     return (Text.pack (first : rest))
 
 nameOrKeyword :: Text -> Token
-nameOrKeyword text = case lookup text (map (\keyword -> (toText keyword, keyword)) (enumerate @Keyword)) of
+nameOrKeyword text' = case lookup text' (map (\keyword -> (toText keyword, keyword)) (enumerate @Keyword)) of
     Just keyword -> Keyword keyword
-    Nothing      -> Name text
+    Nothing      -> Name text'
 
 number :: Prod r Integer
 number = do
     minusSign <- zeroOrOne (E.token '-')
     digits    <- oneOrMore (E.satisfy isDigit)
     return (read (minusSign ++ digits))
+
+text :: Prod r Text
+text = do
+    _       <- E.token '"'
+    content <- zeroOrMore (E.satisfy (\c -> not (elem c ['"', '\n'])))
+    _       <- E.token '"'
+    return (Text.pack content)
 
 -- FIXME BUGS:
 -- unary negation is ambiguous with both negative literals and binary negation :(
@@ -183,7 +192,8 @@ tokens = mdo
         whitespaced (literal EqualsSign),
         literal Comma,
         literal Semicolon,
-        literal Newline]))
+        literal Newline,
+        liftA1 Text text]))
     spacesRec     <- E.rule (oneOf [spaces,     liftA2 (++) spaces     stringlikeRec, liftA2 (++) spaces     fixedRec])
     stringlikeRec <- E.rule (oneOf [stringlike, liftA2 (++) stringlike fixedRec,      liftA2 (++) stringlike spacesRec])
     fixedRec      <- E.rule (oneOf [fixed,      liftA2 (++) fixed      spacesRec,     liftA2 (++) fixed      stringlikeRec, liftA2 (++) fixed fixedRec])
@@ -192,11 +202,11 @@ tokens = mdo
 
 data Error
     = Invalid
-    | Ambiguous [[Token]]
+    | Ambiguous ![[Token]]
     deriving Show
 
 tokenize :: Text -> Either Error [Token]
-tokenize text = case fst (E.fullParses (E.parser tokens) text) of
+tokenize text' = case fst (E.fullParses (E.parser tokens) text') of
     []    -> Left  Invalid
     [one] -> Right one
     more  -> Left  (Ambiguous more)

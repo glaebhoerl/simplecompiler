@@ -9,8 +9,8 @@ import qualified AST
 import qualified Name
 --import Name (Name)
 
-andThen :: (Show b, Show e) => IO (Maybe a) -> (a -> Either e b) -> IO (Maybe b)
-andThen getPrev process = do
+thenTry :: (Show b, Show e) => IO (Maybe a) -> (a -> Either e b) -> IO (Maybe b)
+thenTry getPrev process = do
     prev <- getPrev
     case prev of
         Nothing -> return Nothing
@@ -24,7 +24,7 @@ main = do
     let readInput = do
            input <- getContents
            return (Just input)
-    void $ readInput      `andThen`
-           Token.tokenize `andThen`
-           AST.parse      `andThen`
+    void $ readInput      `thenTry`
+           Token.tokenize `thenTry`
+           AST.parse      `thenTry`
            Name.resolveNames

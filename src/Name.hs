@@ -14,9 +14,9 @@ import AST (AST)
 type Path = [Int]
 
 data Name = Name {
-    path        :: Path,
-    name        :: Text,
-    bindingType :: AST.BindingType
+    path        :: !Path,
+    name        :: !Text,
+    bindingType :: !AST.BindingType
 } deriving Show
 
 instance Eq Name where
@@ -26,8 +26,8 @@ instance Ord Name where
     compare n1 n2 = compare (path n1, name n1) (path n2, name n2)
 
 data Error
-    = NameNotFound    Text Path
-    | NameWouldShadow Text Path
+    = NameNotFound    !Text !Path
+    | NameWouldShadow !Text !Path
     deriving Show
 
 class Monad m => NameResolveM m where
@@ -82,8 +82,8 @@ instance NameResolveM NameResolve where
                 M.put ((scopeID, Map.insert name btype names) : rest)
                 return (Name (map fst rest) name btype)
 
-resolveNames :: AST Text -> Either Error (AST Name)
-resolveNames ast = M.runExcept (M.evalStateT (runNameResolve (resolveNamesIn ast)) [])
+resolveNames :: ResolveNamesIn node => node Text -> Either Error (node Name)
+resolveNames node = M.runExcept (M.evalStateT (runNameResolve (resolveNamesIn node)) [])
 
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node Text -> m (node Name)
@@ -124,6 +124,8 @@ instance ResolveNamesIn AST.Statement where
             return (AST.Return resolvedMaybeExpr)
         AST.Break -> do
             return AST.Break
+        AST.Say text -> do
+            return (AST.Say text)
         AST.Write expr -> do
             resolvedExpr <- resolveNamesIn expr
             return (AST.Write resolvedExpr)
@@ -142,8 +144,8 @@ instance ResolveNamesIn AST.Expression where
             resolvedExpr1 <- resolveNamesIn expr1
             resolvedExpr2 <- resolveNamesIn expr2
             return (AST.BinaryOperator resolvedExpr1 op resolvedExpr2)
-        AST.Read -> do
-            return AST.Read
+        AST.Ask text -> do
+            return (AST.Ask text)
 
 isWellFormed :: AST Name -> Bool
 isWellFormed = todo

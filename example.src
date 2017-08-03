@@ -1,7 +1,8 @@
 var n = 0
 forever {
+    say("Running total:")
     write(n)
-    let m = read()
+    let m = ask("Number to add:")
     if m == 0 {
         return
     }

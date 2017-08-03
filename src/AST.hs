@@ -11,10 +11,13 @@ data Expression name
     | Literal        !Integer
     | UnaryOperator  !UnaryOperator     !(Expression name)
     | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
-    | Read
+    | Ask            !Text
     deriving (Eq, Show)
 
-data BindingType = Let | Var deriving (Eq, Show)
+data BindingType
+    = Let
+    | Var
+    deriving (Eq, Show)
 
 -- TODO: add "plain blocks"
 data Statement name
@@ -26,10 +29,13 @@ data Statement name
     | While      !(Expression name) !(Block name)
     | Return     !(Maybe (Expression name))
     | Break
+    | Say        !Text
     | Write      !(Expression name)
     deriving (Eq, Show)
 
-newtype Block name = Block { body :: [Statement name] } deriving (Eq, Show)
+newtype Block name = Block {
+    body :: [Statement name]
+} deriving (Eq, Show)
 
 type Expected = Text
 
@@ -60,8 +66,8 @@ expressionGrammar = mdo
                                      (E.terminal (\case T.Name   n -> Just n; _ -> Nothing)),
                               liftA1 Literal
                                      (E.terminal (\case T.Number n -> Just n; _ -> Nothing)),
-                              liftA1 (const Read)
-                                     (E.token (T.Name "read") `followedBy` bracketed T.Round (pure ())),
+                              liftA1 Ask
+                                     (E.token (T.Name "ask") `followedBy` bracketed T.Round (E.terminal (\case T.Text text -> Just text; _ -> Nothing))),
                               bracketed T.Round logicals]
 
     unary       <- ruleCases [liftA2 UnaryOperator
@@ -99,7 +105,6 @@ expressionGrammar = mdo
 blockGrammar :: Grammar r (Block Text)
 blockGrammar = mdo
     expression <- expressionGrammar
-    block <- E.rule (bracketed T.Curly statements)
     let keyword kw = E.token (T.Keyword kw)
     -----------------------------------------------------------
     binding <- E.rule $ do
@@ -151,9 +156,10 @@ blockGrammar = mdo
     break <- E.rule $ do
         _ <- keyword T.K_break
         return Break
+    say   <- E.rule (liftA1 Say   (E.token (T.Name "say")   `followedBy` bracketed T.Round (E.terminal (\case T.Text text -> Just text; _ -> Nothing))))
     write <- E.rule (liftA1 Write (E.token (T.Name "write") `followedBy` bracketed T.Round expression))
     -----------------------------------------------------
-    oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, write]
+    oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, say, write]
     moreStatements <- E.rule $ do
         first <- oneStatement
         _     <- oneOrMore (oneOf [E.token T.Semicolon, E.token T.Newline])
@@ -165,14 +171,15 @@ blockGrammar = mdo
         _ <- eatNewlines
         s <- oneOrMoreStatements
         _ <- eatNewlines
-        return (Block s)
-    return statements
+        return s
+    block <- E.rule (liftA1 Block (bracketed T.Curly statements))
+    return (liftA1 Block statements)
 
 type AST = Block
 
 data Error
-    = Invalid   Int [Expected] [T.Token]
-    | Ambiguous [AST Text]
+    = Invalid   !Int ![Expected] ![T.Token]
+    | Ambiguous ![AST Text]
     deriving Show
 
 parse :: [T.Token] -> Either Error (AST Text)

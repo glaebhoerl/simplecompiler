@@ -69,7 +69,7 @@ executable stageless
                        prettyprinter,
                        text,
                        transformers
-  ghc-options:         -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+  ghc-options:         -W -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
 
 source-repository head
   type:     git
