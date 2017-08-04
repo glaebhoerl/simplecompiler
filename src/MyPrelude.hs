@@ -1,16 +1,21 @@
 module MyPrelude (module MyPrelude, module Reexports) where
 
-import Prelude                   as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl)
-import Data.Text.IO              as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile)
-import Data.Text                 as Reexports        (Text)
-import Data.Foldable             as Reexports        (foldl')
-import Control.Applicative       as Reexports -- TODO write explicit import lists for these too
-import Control.Monad             as Reexports
-import Control.Monad.Trans.Class as Reexports
-import Data.Either               as Reexports
-import Data.Maybe                as Reexports
+import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl)
+import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile)
+import Data.Foldable                    as Reexports        (foldl')
+import Data.Either                      as Reexports        (isLeft, isRight{-, fromLeft, fromRight-})
+import Data.Maybe                       as Reexports        (isJust, isNothing, fromMaybe, maybeToList, catMaybes, mapMaybe)
+import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
+import Control.Monad                    as Reexports        (forM, forM_, (>=>), (<=<), forever, void, join, filterM, foldM, zipWithM, replicateM, guard, when, unless)
+import Control.Monad.Trans.Class        as Reexports        (MonadTrans (lift))
+import Control.Monad.Trans.Except       as Reexports        (ExceptT, Except, runExceptT, runExcept, throwE, catchE)
+import Control.Monad.Trans.State.Strict as Reexports        (StateT,  State,  runStateT,  runState, evalStateT, evalState, get, put, modify')
+import Data.Text                        as Reexports        (Text)
+import Data.Set                         as Reexports        (Set)
+import Data.Map.Strict                  as Reexports        (Map)
 
 import qualified Data.Text as Text
+import Control.Applicative (some, many)
 
 head :: [a] -> Maybe a
 head = \case
@@ -36,6 +41,18 @@ left = either Just (const Nothing)
 
 right :: Either a b -> Maybe b
 right = either (const Nothing) Just
+
+fromLeft :: a -> Either a b -> a
+fromLeft r = fromLeftOr (const r)
+
+fromRight :: b -> Either a b -> b
+fromRight l = fromRightOr (const l)
+
+fromLeftOr :: (b -> a) -> Either a b -> a
+fromLeftOr f = either id f
+
+fromRightOr :: (a -> b) -> Either a b -> b
+fromRightOr f = either f id
 
 bool :: a -> a -> Bool -> a
 bool false true b = if b then true else false
@@ -71,9 +88,10 @@ bug x = error (Text.unpack ("BUG: " ++ x))
 -- TODO HasCallStack
 class Assert x where
     type AssertResult x
-    assert    :: x -> AssertResult x
     msgAssert :: Text -> x -> AssertResult x
-    assert = msgAssert ""
+
+assert :: Assert x => x -> AssertResult x
+assert = msgAssert ""
 
 assertM :: (Assert x, Monad m) => x -> m ()
 assertM x = assert x `seq` return ()
@@ -92,7 +110,7 @@ instance Assert (Maybe a) where
 -- (remove the Show constraint if it turns out to be problematic)
 instance Show e => Assert (Either e a) where
     type AssertResult (Either e a) = a
-    msgAssert msg = either (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e)) id
+    msgAssert msg = fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e))
 
 class Enumerable a where
     enumerate :: [a]

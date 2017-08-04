@@ -175,7 +175,7 @@ number = do
 text :: Prod r Text
 text = do
     _       <- E.token '"'
-    content <- zeroOrMore (E.satisfy (\c -> not (elem c ['"', '\n'])))
+    content <- zeroOrMore (E.satisfy (\c -> notElem c ['"', '\n']))
     _       <- E.token '"'
     return (Text.pack content)
 

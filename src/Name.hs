@@ -3,9 +3,6 @@ module Name where
 import MyPrelude
 
 import qualified Data.Map as Map
-import Data.Map (Map)
-import qualified Control.Monad.Trans.State.Strict as M
-import qualified Control.Monad.Trans.Except       as M
 
 import qualified AST
 import AST (AST)
@@ -49,41 +46,41 @@ findInContext name = \case
         Just btype -> Just (Name (map fst parent) name btype)
 
 newtype NameResolve a = NameResolve {
-    runNameResolve :: M.StateT Context (M.Except Error) a
+    runNameResolve :: StateT Context (Except Error) a
 } deriving (Functor, Applicative, Monad)
 
 instance NameResolveM NameResolve where
     lookupName name = NameResolve $ do
-        context <- M.get
+        context <- get
         case findInContext name context of
             Just found -> return found
-            Nothing    -> lift (M.throwE (NameNotFound name (map fst context)))
+            Nothing    -> lift (throwE (NameNotFound name (map fst context)))
 
     inNewScope action = NameResolve $ do
-        M.modify' (prepend (0, Map.empty))
+        modify' (prepend (0, Map.empty))
         result <- runNameResolve action
-        M.modify' (assert . tail)
-        context <- M.get
+        modify' (assert . tail)
+        context <- get
         case context of
             (scopeID, names) : rest -> do
                 assertM (scopeID >= 0)
-                M.put ((scopeID + 1, names) : rest)
+                put ((scopeID + 1, names) : rest)
                 return result
             [] -> do
                 return result
 
     bindName btype name = NameResolve $ do
-        context <- M.get
+        context <- get
         case context of
             [] -> bug "Attempted to bind a name when not in a scope!"
             (scopeID, names) : rest -> do
                 when (Map.member name names) $ do
-                    lift (M.throwE (NameWouldShadow name (map fst context)))
-                M.put ((scopeID, Map.insert name btype names) : rest)
+                    lift (throwE (NameWouldShadow name (map fst context)))
+                put ((scopeID, Map.insert name btype names) : rest)
                 return (Name (map fst rest) name btype)
 
 resolveNames :: ResolveNamesIn node => node Text -> Either Error (node Name)
-resolveNames node = M.runExcept (M.evalStateT (runNameResolve (resolveNamesIn node)) [])
+resolveNames node = runExcept (evalStateT (runNameResolve (resolveNamesIn node)) [])
 
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node Text -> m (node Name)
