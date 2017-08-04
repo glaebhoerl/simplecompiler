@@ -17,6 +17,8 @@ executable stageless
   hs-source-dirs:      src
   main-is:             Main.hs
   other-modules:       MyPrelude, Token, AST, Name
+
+-- Here we define the language dialect we will be using:
   default-language:    Haskell2010
   default-extensions:  ApplicativeDo,
                        AutoDeriveTypeable,
@@ -39,10 +41,12 @@ executable stageless
                        InstanceSigs,
                        KindSignatures,
                        LambdaCase,
+--                         <3
                        MultiParamTypeClasses,
                        NamedFieldPuns,
                        NegativeLiterals,
                        NoImplicitPrelude,
+--                         `import MyPrelude` instead!
                        OverloadedStrings,
                        PartialTypeSignatures,
                        PatternSynonyms,
@@ -57,7 +61,25 @@ executable stageless
                        TypeOperators,
                        TypeSynonymInstances,
                        ViewPatterns
--- NOTABLY MISSING: CPP, DeriveAnyClass, FunctionalDependencies, RecordWildCards, RoleAnnotations, TemplateHaskell, TypeInType, UndecidableInstances, UndecidableSuperClasses
+
+-- NOTABLY MISSING:
+--     CPP, TemplateHaskell:
+--         Would like to avoid these if at all possible. Use a local `LANGUAGE` pragma if/where we can't.
+--     DeriveAnyClass:
+--         Would be nice, but in GHC 8.0 it's badly implemented and conflicts with GeneralizedNewtypeDeriving.
+--     FunctionalDependencies:
+--         Use TypeFamilies instead.
+--     OverloadedLists:
+--         I got a type ambiguity error that I think was caused by this, and otherwise haven't needed it.
+--     RecordWildCards:
+--         Tryna keep it obvious where names are coming from.
+--     RoleAnnotations:
+--         Seems niche and it's quite possible we won't ever need it.
+--     TypeInType:
+--         Very new and fancy and powerful. Give it some time.
+--     UndecidableInstances, UndecidableSuperClasses:
+--         Not evil, but use a local `LANGUAGE` pragma to call it out if it's necessary.
+
   build-depends:       base >= 4.7 && < 5,
                        bound,
                        bytestring,
