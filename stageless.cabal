@@ -41,12 +41,12 @@ executable stageless
                        InstanceSigs,
                        KindSignatures,
                        LambdaCase,
---                         <3
+                       --^^ <3
                        MultiParamTypeClasses,
                        NamedFieldPuns,
                        NegativeLiterals,
                        NoImplicitPrelude,
---                         `import MyPrelude` instead!
+                       --^^ `import MyPrelude` instead!
                        OverloadedStrings,
                        PartialTypeSignatures,
                        PatternSynonyms,

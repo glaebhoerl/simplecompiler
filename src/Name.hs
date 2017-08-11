@@ -10,17 +10,24 @@ import AST (AST)
 -- subscopes within each scope are numbered positionally, starting with 0
 type Path = [Int]
 
-data Name = Name {
-    path        :: !Path,
-    name        :: !Text,
-    bindingType :: !AST.BindingType
+data Name info = Name {
+    path :: !Path,
+    name :: !Text,
+    info :: !info
 } deriving Show
 
-instance Eq Name where
+instance Eq (Name info) where
     n1 == n2 = (path n1, name n1) == (path n2, name n2)
 
-instance Ord Name where
+instance Ord (Name info) where
     compare n1 n2 = compare (path n1, name n1) (path n2, name n2)
+
+data Info = Info {
+    bindingType :: !AST.BindingType,
+    initializer :: !(AST.Expression ResolvedName)
+} deriving (Eq, Show)
+
+type ResolvedName = Name Info
 
 data Error
     = NameNotFound    !Text !Path
@@ -28,22 +35,22 @@ data Error
     deriving Show
 
 class Monad m => NameResolveM m where
-    lookupName :: Text -> m Name
+    lookupName :: Text -> m ResolvedName
     inNewScope :: m a  -> m a
-    bindName   :: AST.BindingType -> Text -> m Name
+    bindName   :: Text -> Info -> m ResolvedName
 
 -- the stack of scopes we are currently inside
 -- fst: how many sub-scopes within that scope we have visited so far
 -- snd: the names bound within that scope
 -- TODO maybe use Natural and NonEmpty here
-type Context = [(Int, Map Text AST.BindingType)]
+type Context = [(Int, Map Text Info)]
 
-findInContext :: Text -> Context -> Maybe Name
+findInContext :: Text -> Context -> Maybe ResolvedName
 findInContext name = \case
     [] -> Nothing
     ((_, names) : parent) -> case Map.lookup name names of
-        Nothing    -> findInContext name parent
-        Just btype -> Just (Name (map fst parent) name btype)
+        Nothing   -> findInContext name parent
+        Just info -> Just (Name (map fst parent) name info)
 
 newtype NameResolve a = NameResolve {
     runNameResolve :: StateT Context (Except Error) a
@@ -69,37 +76,39 @@ instance NameResolveM NameResolve where
             [] -> do
                 return result
 
-    bindName btype name = NameResolve $ do
+    bindName name info = NameResolve $ do
         context <- get
         case context of
             [] -> bug "Attempted to bind a name when not in a scope!"
             (scopeID, names) : rest -> do
                 when (Map.member name names) $ do
                     lift (throwE (NameWouldShadow name (map fst context)))
-                put ((scopeID, Map.insert name btype names) : rest)
-                return (Name (map fst rest) name btype)
+                put ((scopeID, Map.insert name info names) : rest)
+                return (Name (map fst rest) name info)
 
-resolveNames :: ResolveNamesIn node => node Text -> Either Error (node Name)
-resolveNames node = runExcept (evalStateT (runNameResolve (resolveNamesIn node)) [])
+resolveNames :: AST Text -> Either Error (AST ResolvedName)
+resolveNames ast = runExcept (evalStateT (runNameResolve (resolveNamesIn ast)) [])
 
 class ResolveNamesIn node where
-    resolveNamesIn :: NameResolveM m => node Text -> m (node Name)
+    resolveNamesIn :: NameResolveM m => node Text -> m (node ResolvedName)
 
 instance ResolveNamesIn AST.Block where
     resolveNamesIn (AST.Block body) = do
         resolvedBody <- inNewScope (mapM resolveNamesIn body)
         return (AST.Block resolvedBody)
 
+-- all of this is SO CLOSE to just being a `mapM`,
+-- except for `bindName` and `inNewScope` for blocks...
+-- we could solve `bindName` by having a binding vs. reference sum type
+-- but `inNewScope` is flummoxing
 instance ResolveNamesIn AST.Statement where
     resolveNamesIn = \case
         AST.Binding btype name expr -> do
+            -- resolve the expression BEFORE binding the name:
+            -- the name should not be in scope for the expression!
             resolvedExpr <- resolveNamesIn expr
-            fullName <- bindName btype name
+            fullName <- bindName name (Info btype resolvedExpr)
             return (AST.Binding btype fullName resolvedExpr)
-        AST.Assign name expr -> do
-            resolvedName <- lookupName name
-            resolvedExpr <- resolveNamesIn expr
-            return (AST.Assign resolvedName resolvedExpr)
         AST.IfThen expr body -> do
             resolvedExpr <- resolveNamesIn expr
             resolvedBody <- resolveNamesIn body
@@ -116,35 +125,13 @@ instance ResolveNamesIn AST.Statement where
             resolvedExpr <- resolveNamesIn expr
             resolvedBody <- resolveNamesIn body
             return (AST.While resolvedExpr resolvedBody)
-        AST.Return maybeExpr -> do
-            resolvedMaybeExpr <- mapM resolveNamesIn maybeExpr
-            return (AST.Return resolvedMaybeExpr)
-        AST.Break -> do
-            return AST.Break
-        AST.Say text -> do
-            return (AST.Say text)
-        AST.Write expr -> do
-            resolvedExpr <- resolveNamesIn expr
-            return (AST.Write resolvedExpr)
+        ast -> do
+            mapM lookupName ast
 
 instance ResolveNamesIn AST.Expression where
-    resolveNamesIn = \case
-        AST.Name name -> do
-            resolvedName <- lookupName name
-            return (AST.Name resolvedName)
-        AST.Literal n -> do
-            return (AST.Literal n)
-        AST.UnaryOperator op expr -> do
-            resolvedExpr <- resolveNamesIn expr
-            return (AST.UnaryOperator op resolvedExpr)
-        AST.BinaryOperator expr1 op expr2 -> do
-            resolvedExpr1 <- resolveNamesIn expr1
-            resolvedExpr2 <- resolveNamesIn expr2
-            return (AST.BinaryOperator resolvedExpr1 op resolvedExpr2)
-        AST.Ask text -> do
-            return (AST.Ask text)
+    resolveNamesIn = mapM lookupName
 
-isWellFormed :: AST Name -> Bool
+isWellFormed :: AST ResolvedName -> Bool
 isWellFormed = todo
 
 lookupPath :: Path -> AST name -> Maybe (AST name)

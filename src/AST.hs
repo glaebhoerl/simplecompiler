@@ -12,7 +12,7 @@ data Expression name
     | UnaryOperator  !UnaryOperator     !(Expression name)
     | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
     | Ask            !Text
-    deriving (Eq, Show)
+    deriving (Eq, Show, Functor, Foldable, Traversable)
 
 data BindingType
     = Let
@@ -31,11 +31,11 @@ data Statement name
     | Break
     | Say        !Text
     | Write      !(Expression name)
-    deriving (Eq, Show)
+    deriving (Eq, Show, Functor, Foldable, Traversable)
 
 newtype Block name = Block {
     body :: [Statement name]
-} deriving (Eq, Show)
+} deriving (Eq, Show, Functor, Foldable, Traversable)
 
 type Expected = Text
 

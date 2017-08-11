@@ -163,6 +163,7 @@ BLAH
       ispc compiles a C-based SPMD programming language to run on the SIMD units of CPUs and the Intel Xeon Phi™ architecture; it frequently provides a 3x or more speedup on CPUs with 4-wide vector SSE units and 5x-6x on CPUs with 8-wide AVX vector units, without any of the difficulty of writing intrinsics code. Parallelization across multiple cores is also supported by ispc, making it possible to write programs that achieve performance improvement that scales by both number of cores and vector unit size.
 
 CLI: optparse-applicative? there seem to be many options here!
+  https://www.stackage.org/haddock/lts-9.0/optparse-generic-1.2.2/Options-Generic.html
 
 LEXING: inchworm? (scanner, lexer-applicative?)
 
@@ -195,14 +196,24 @@ IR REPRESENTATION: CPS, SSA, ANF, Join Points, Sea-of-Nodes, Thorin, ...?
     do we want to do the reordering beforehand, so IR only has a single kind of struct?
     what about the case of structural sums, where we'd want/need a discriminant of fixed size, unlike named enums?
   if the IR has a closed universe of types, can we actually put (part/most of) the `quote` operation in the compiler...?
+  https://wingolog.org/archives/2011/07/12/static-single-assignment-for-functional-programmers
 
 OPTIMIZATION: Hoopl?
   Does it work with ANFj?
   Are there any competitors?
   Can we use this for CFG analysis and checking as well? instead of just optimization?
+    liveness analysis, which it can do, seems like exactly what we need to implement "eager drops"
+  http://blog.ezyang.com/2011/02/picturing-hoopl-transferrewrite-functions/
   http://blog.ezyang.com/2011/04/hoopl-guided-tour-base-system/
+  http://blog.ezyang.com/2011/04/hoopl-dataflow-lattices/
+  http://blog.ezyang.com/2011/04/hoopl-dataflow-analysis/
 
 SERIALIZATION: store, flat, cereal? (packman?)
+
+TESTING:
+  https://github.com/unisonweb/unison/tree/master/yaks/easytest
+  hedgehog
+  there was one where it automatically generated a test based on the current output?
 
 OTHER
   generic-lens
@@ -291,3 +302,21 @@ CRAZY IDEAS (future directions):
        its size and offset parameters, then those'll be optimized away. Yay.
      * I wonder if there's more to it...
 
+Being able to generate function pointers at runtime could also help with C FFI?
+(What about C++? Probably not: think we'd need to link in clang to really be able to deal with templates...:\)
+
+coding conventions used:
+ - avoid nonstandard binary operators
+ - use $ only if necessary to orevent parentheses spanning multiple lines
+ - do notation is Good
+ - eschew function defns by multiple bindings: use \case instead (possible exception: needing to simultaneously match on multiple args)
+ - only one unqualified-mass-import per module is allowed
+ - avoid abbreviating things where reasonably possible
+ - try to have consistent 4-space indents, where reasonable
+ - avoid repeatedly importing the same "standard" things in multiple modules
+ - (likewise, avoid repeatedly specifying the same language extensions)
+ - avoid heavy machinery unless absolutely necessary
+ - don't abstract without reason
+ - maybe I should re-allow name shadowing?
+ - avoid unnecessary hierarchy for modules
+ - use names short enough that qualifying with them doesn't hurt
