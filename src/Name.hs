@@ -10,28 +10,32 @@ import AST (AST)
 -- subscopes within each scope are numbered positionally, starting with 0
 type Path = [Int]
 
-data Name info = Name {
-    path :: !Path,
-    name :: !Text,
+data Name = Name {
+    path      :: !Path,
+    givenName :: !Text
+} deriving (Eq, Ord, Show)
+
+data NameWith info = NameWith {
+    name :: !Name,
     info :: !info
-} deriving Show
+} deriving (Show, Functor)
 
-instance Eq (Name info) where
-    n1 == n2 = (path n1, name n1) == (path n2, name n2)
+instance Eq (NameWith info) where
+    (==) = (==) `on` name
 
-instance Ord (Name info) where
-    compare n1 n2 = compare (path n1, name n1) (path n2, name n2)
+instance Ord (NameWith info) where
+    compare = compare `on` name
 
 data Info = Info {
     bindingType :: !AST.BindingType,
     initializer :: !(AST.Expression ResolvedName)
 } deriving (Eq, Show)
 
-type ResolvedName = Name Info
+type ResolvedName = NameWith Info
 
 data Error
-    = NameNotFound    !Text !Path
-    | NameWouldShadow !Text !Path
+    = NameNotFound !Text !Path
+    | NameConflict !Text !Path
     deriving Show
 
 class Monad m => NameResolveM m where
@@ -50,7 +54,7 @@ findInContext name = \case
     [] -> Nothing
     ((_, names) : parent) -> case Map.lookup name names of
         Nothing   -> findInContext name parent
-        Just info -> Just (Name (map fst parent) name info)
+        Just info -> Just (NameWith (Name (map fst parent) name) info)
 
 newtype NameResolve a = NameResolve {
     runNameResolve :: StateT Context (Except Error) a
@@ -82,9 +86,9 @@ instance NameResolveM NameResolve where
             [] -> bug "Attempted to bind a name when not in a scope!"
             (scopeID, names) : rest -> do
                 when (Map.member name names) $ do
-                    lift (throwE (NameWouldShadow name (map fst context)))
+                    lift (throwE (NameConflict name (map fst context)))
                 put ((scopeID, Map.insert name info names) : rest)
-                return (Name (map fst rest) name info)
+                return (NameWith (Name (map fst rest) name) info)
 
 resolveNames :: AST Text -> Either Error (AST ResolvedName)
 resolveNames ast = runExcept (evalStateT (runNameResolve (resolveNamesIn ast)) [])

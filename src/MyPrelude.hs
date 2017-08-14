@@ -1,19 +1,23 @@
 module MyPrelude (module MyPrelude, module Reexports) where
 
-import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl)
+import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl, (/=))
 import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile)
 import Data.Foldable                    as Reexports        (foldl')
+import Data.Int                         as Reexports        ( Int,  Int8,  Int16,  Int32,  Int64)
+import Data.Word                        as Reexports        (Word, Word8, Word16, Word32, Word64)
 import Data.Either                      as Reexports        (isLeft, isRight{-, fromLeft, fromRight-})
 import Data.Maybe                       as Reexports        (isJust, isNothing, fromMaybe, maybeToList, catMaybes, mapMaybe)
+import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
-import Control.Monad                    as Reexports        (forM, forM_, (>=>), (<=<), forever, void, join, filterM, foldM, zipWithM, replicateM, guard, when, unless)
+import Control.Monad                    as Reexports        (liftM, forM, forM_, (>=>), (<=<), forever, void, join, filterM, foldM, zipWithM, replicateM, guard, when, unless)
 import Control.Monad.Trans.Class        as Reexports        (MonadTrans (lift))
 import Control.Monad.Trans.Except       as Reexports        (ExceptT, Except, runExceptT, runExcept, throwE, catchE)
-import Control.Monad.Trans.State.Strict as Reexports        (StateT,  State,  runStateT,  runState, evalStateT, evalState, get, put, modify')
+import Control.Monad.Trans.State.Strict as Reexports        (StateT,  State,  runStateT,  runState, evalStateT, evalState, execStateT, execState, get, put, modify')
 import Data.Text                        as Reexports        (Text)
 import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
 
+import Prelude ((/=))
 import qualified Data.Text as Text
 import Control.Applicative (some, many)
 
@@ -35,6 +39,9 @@ prepend = (:)
 
 single :: a -> [a]
 single = \a -> [a]
+
+(!=) :: Eq a => a -> a -> Bool
+(!=) = (/=)
 
 left :: Either a b -> Maybe a
 left = either Just (const Nothing)
@@ -93,11 +100,11 @@ class Assert x where
 assert :: Assert x => x -> AssertResult x
 assert = msgAssert ""
 
-assertM :: (Assert x, Monad m) => x -> m ()
-assertM x = assert x `seq` return ()
+assertM :: (Assert x, Monad m) => x -> m (AssertResult x)
+assertM x = return $! assert x
 
-msgAssertM :: (Assert x, Monad m) => Text -> x -> m ()
-msgAssertM msg x = msgAssert msg x `seq` return ()
+msgAssertM :: (Assert x, Monad m) => Text -> x -> m (AssertResult x)
+msgAssertM msg x = return $! msgAssert msg x
 
 instance Assert Bool where
     type AssertResult Bool = ()
