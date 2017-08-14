@@ -1,0 +1,19 @@
+var number = 1
+while number <= 100 {
+    let divisible3 = number % 3 == 0
+    let divisible5 = number % 5 == 0
+    if divisible3 && divisible5 {
+        say("FizzBuzz")
+    } else {
+        if divisible3 {
+            say("Fizz")
+        } else {
+            if divisible5 {
+                say("Buzz")
+            } else {
+                write(number)
+            }
+        }
+    }
+    number = number + 1
+}
