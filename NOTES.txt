@@ -197,6 +197,9 @@ IR REPRESENTATION: CPS, SSA, ANF, Join Points, Sea-of-Nodes, Thorin, ...?
     what about the case of structural sums, where we'd want/need a discriminant of fixed size, unlike named enums?
   if the IR has a closed universe of types, can we actually put (part/most of) the `quote` operation in the compiler...?
   https://wingolog.org/archives/2011/07/12/static-single-assignment-for-functional-programmers
+  for possible future reference:
+    Simple and Efficient Construction of Static Single Assignment Form
+    http://pp.ipd.kit.edu/uploads/publikationen/braun13cc.pdf
 
 OPTIMIZATION: Hoopl?
   Does it work with ANFj?

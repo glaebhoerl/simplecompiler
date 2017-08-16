@@ -20,6 +20,7 @@ import Data.Map.Strict                  as Reexports        (Map)
 import Prelude ((/=))
 import qualified Data.Text as Text
 import Control.Applicative (some, many)
+import GHC.Stack (HasCallStack)
 
 head :: [a] -> Maybe a
 head = \case
@@ -86,24 +87,23 @@ zeroOrMore = many
 showText :: Show a => a -> Text
 showText = Text.pack . show
 
-todo :: a
-todo = error "TODO I should use HasCallStack here"
+todo :: HasCallStack => a
+todo = error "TODO"
 
-bug :: Text -> a
+bug :: HasCallStack => Text -> a
 bug x = error (Text.unpack ("BUG: " ++ x))
 
--- TODO HasCallStack
 class Assert x where
     type AssertResult x
-    msgAssert :: Text -> x -> AssertResult x
+    msgAssert :: HasCallStack => Text -> x -> AssertResult x
 
-assert :: Assert x => x -> AssertResult x
+assert :: (HasCallStack, Assert x) => x -> AssertResult x
 assert = msgAssert ""
 
-assertM :: (Assert x, Monad m) => x -> m (AssertResult x)
+assertM :: (HasCallStack, Assert x, Monad m) => x -> m (AssertResult x)
 assertM x = return $! assert x
 
-msgAssertM :: (Assert x, Monad m) => Text -> x -> m (AssertResult x)
+msgAssertM :: (HasCallStack, Assert x, Monad m) => Text -> x -> m (AssertResult x)
 msgAssertM msg x = return $! msgAssert msg x
 
 instance Assert Bool where

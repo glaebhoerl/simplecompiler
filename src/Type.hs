@@ -85,8 +85,9 @@ checkExpression expected expr = do
 
 checkStatement :: TypeCheckM m => AST.Statement ResolvedName -> m ()
 checkStatement = \case
-    AST.Binding _ _ expr -> do
-        void (inferExpression expr)
+    AST.Binding _ name expr -> do
+        type' <- inferExpression expr
+        recordType (Name.name name) type'
     AST.Assign name expr -> do
         when ((Name.bindingType (Name.info name)) != AST.Var) $ do
             reportError AssignToLet
@@ -107,6 +108,7 @@ checkStatement = \case
     AST.Return maybeExpr -> do
         mapM_ (checkExpression Int) maybeExpr
     AST.Break -> do
+        -- TODO we should check that we're in a loop!!
         return ()
     AST.Say _ -> do
         return ()
