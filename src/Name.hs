@@ -1,4 +1,4 @@
-module Name where
+module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..), resolveNames) where
 
 import MyPrelude
 

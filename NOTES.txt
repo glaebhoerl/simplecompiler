@@ -176,6 +176,8 @@ PARSING: Earley, grammatical-parsers, trifecta?
 PRETTY PRINTING
   https://hackage.haskell.org/package/prettyprinter
 
+PRETTY PRINTING of Show instances: groom, pretty-show, show-prettyprint, pretty-simple
+
 NAME MANAGEMENT: either zabt or bound
 
 SOURCE LOCATIONS: `loc` seems the nicest!

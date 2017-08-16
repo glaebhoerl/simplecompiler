@@ -1,4 +1,4 @@
-module Token where
+module Token (Token (..), Keyword (..), Bracket (..), BracketKind (..), BracketDirection (..), Error (..), tokenize) where
 
 import MyPrelude
 

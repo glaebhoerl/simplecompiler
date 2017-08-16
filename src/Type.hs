@@ -1,4 +1,4 @@
-module Type where
+module Type (Type (..), TypedName, Error (..), checkTypes, typeOf) where
 
 import MyPrelude
 

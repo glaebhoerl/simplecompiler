@@ -1,4 +1,4 @@
-module AST where
+module AST (Expression (..), BindingType (..), Statement (..), Block (..), AST, Error (..), parse) where
 
 import MyPrelude
 
