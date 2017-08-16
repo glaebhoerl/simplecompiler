@@ -18,9 +18,13 @@ import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
 
 import Prelude ((/=))
-import qualified Data.Text as Text
+import qualified Text.Pretty.Simple
+import qualified Data.Text      as Text
+import qualified Data.Text.Lazy as LazyText
 import Control.Applicative (some, many)
 import GHC.Stack (HasCallStack)
+
+type LazyText = LazyText.Text
 
 head :: [a] -> Maybe a
 head = \case
@@ -86,6 +90,12 @@ zeroOrMore = many
 
 showText :: Show a => a -> Text
 showText = Text.pack . show
+
+prettyShow :: Show a => a -> Text
+prettyShow = LazyText.toStrict . Text.Pretty.Simple.pShowLightBg
+
+prettyPrint :: Show a => a -> IO ()
+prettyPrint = Text.Pretty.Simple.pPrintLightBg
 
 todo :: HasCallStack => a
 todo = error "TODO"

@@ -18,7 +18,7 @@ thenTry getPrev process = do
         Nothing -> return Nothing
         Just result -> do
             let processed = process result
-            print processed
+            prettyPrint processed
             return (right processed)
 
 main :: IO ()
