@@ -18,12 +18,6 @@ Re-opening Closures
 Andrew W. Appel
 https://www.cs.princeton.edu/~appel/papers/reo.pdf
 
-NEXT WEEK
-  Think through use cases
-    Start writing example programs / test cases (pseudo-code)
-  Dev environment
-  Compile something with LLVM bindings
-
 CONSTRAINTS
   Compiler has to work as both
     Command-line application
@@ -325,3 +319,129 @@ coding conventions used:
  - maybe I should re-allow name shadowing?
  - avoid unnecessary hierarchy for modules
  - use names short enough that qualifying with them doesn't hurt
+
+
+
+
+
+
+
+
+
+
+# OUTDATED NOTES ABOUT IR STRUCTURE
+
+
+-- blocks and variable decls should follow the lexically scoped structure of the source program
+-- jumps ("join points") should be distinguished from calls
+-- do we want "basic blocks"?
+--   yes, if we distinguish jumps from calls, and jumps are always in tail position, that means we have BBs
+--   wait... does that mean we have BBs or EBBs??
+-- what about "basic block arguments"??
+--   IINM these are equivalent to PHIs, and they're needed when mutating locals?? are they used for anything else?
+--   we don't want it for mutation I don't think
+--   what about for expressions like `bar(if foo { a } else { b })`?
+--     seems natural to represent that as a block which takes 1 argument and calls `bar()` with it?
+--     IINM this means blocks would always have just 1 argument, not more...? an expr can't evaluate to more than 1 thing?
+--       what about `baz(if foo { a } else { b }, if bar { c } else { d })`?
+--       if nothing else match arms would expect multiple incoming values! so we should just go with multiple regardless
+--         would this let us handle enum destructuring in a type-safe way?
+--           is a "primitive switch" construct sufficient? what about e.g. `if` guards?
+--         (based on join points paper: yes, this seems correct)
+--         in fact, if we ever have existential types we'd need polymorphic join points to destructure them!
+--       (the question of how to translate nested control flow is still interesting though)
+--          maybe: first, extract into temporaries:
+--            let tmp1 = if foo { a } else { b }; let tmp2 = if bar { c } else { d }; baz(tmp1, tmp2)
+--          then introduce join points for each with `tmp1` and `tmp2` becoming parameters?
+--            the second one would be within the scope of the first, with `tmp1` in scope implicitly?
+
+-- once we add struct fields, will field access count as a Value? kinda seems like it should...
+--   this means the Value vs Expression distinction isn't quite the same as introduction vs. elimination forms ("literals vs figuratives")
+--     (should we still have that distinction at a previous stage, e.g. for typechecking?)
+-- what about things that require a load (not just a GEP)?
+--   how would recursive structs be represented?
+--   for `ref`s`, it seems pretty clear that load-and-store should be explicit
+
+-- if/when we add intensional polymorphism, maybe we'd want a dependently typed IR with Types as explicit values?
+   -- if/when we add HKT too, it'll be `Type -> Type` values and such...
+   -- or maybe this should just be a succeeding pass, I'm not sure if there's anything in particular we want to do with Types at this level?
+-- RankNTypes: We can just restrict `compile` to monomorphic functions to start with if we don't want to figure it out yet?
+   -- How even would you specify "a function that can be arbitrarily polymorphic" in a signature??
+     -- Ah - I think with ImpredicativeTypes: as `T`.
+     -- Impredicativity ofc means you can instantiate type variables with polymorphic types if you want...
+         -- Whereas RankNTypes means only functions can be polymorphic, iirc?
+         -- Can impredicativity work with intensional polymorphism at all???
+         -- Are the questions of having polymorphic non-function-types and having impredicativity connected or separate?
+         -- What about the question of instantiating type variables "inside of" a type?
+           -- One thing we DEFINITELY can't do is instantiate `List<foreach<T> Foo<T>>` to a specific `List<Foo<UInt8>>` e.g. without having a uniform representation
+             -- `foreach<T> Foo<T>` would be represented as a function, while `Foo<UInt8>` would be unboxed!
+             -- We could somehow restrict it to types which inherently have uniform representation (e.g. refs), but it's unlikely we'd want this complexity
+           -- Apparent options:
+             -- (1) Forbid instantiating type variables inside types. Is this reasonable?
+               -- This is "one step down"; instantiating type variables with polytypes is a "kinding question", this is a "typing question"?
+             -- (2) Only functions can be polymorphic. Would a generic fn and its instantiation have compatible reprs in this case??
+                -- The generic fn would be taking additional arguments so it's not clear they would be...
+                -- Maybe every fn could have its first argument be to its type-args, null for monomorphic ones?
+                  -- (What's the perf impact?)
+                    -- I guess you could have this as a wrapper over the version without the arg, so it'd only hit in higher-order cases?
+                  -- The other impact of course is that the type-args would have to be accessed through an additional indirection
+                -- Could this be folded together with the env-arg for closures or would they have to be separate?
+                  -- I think they'd have to be separate -- the env is determined when creating the closure, the type-args when calling it?
+                -- WAIT I don't think this works at all
+                  -- To instantiate a generic function a type, it'd have to be partially applied to some type arguments
+                    -- Quite physically, with intensional polymorphism
+                  -- Which requires mapping over the List just the same
+                  -- So I guess restriction (1) is the only game in town? Does it have a name?
+
+{-
+
+the source program:
+var n = 0
+forever {
+    say("Running total:")
+    write(n)
+    let m = ask("Number to add:")
+    if m == 0 {
+        return
+    }
+    n = n + m
+}
+
+should be translated to:
+
+let n = 0
+block forever0() {
+    say("Running total:")
+    write(n)
+    let m = ask("Number to add:")
+    let tmp1 = (m == 0)
+
+    if tmp1 {
+        jump if0true()
+    } else {
+        jump if0join()
+    }
+
+    block if0true() {
+        return
+    }
+
+    block if0join() {
+        let tmp2 = n + m
+        n = tmp2
+        jump forever0()
+    }
+}
+
+seems we either have to abandon decl-before-use, or we have to invert the ordering of control flow a bit
+not sure which is better
+otoh what's the point of translating the source program to globally unique names if we go back to scoping again here???
+    maybe this is where it makes sense to start using a name management lib like (un)bound?
+    I think what requiring well-scoped names gets us is the guaranteed absence of using-unitialized-memory?
+    together with basic block arguments it seems ideal for also having explicit moves?
+      though it'd require substructural typing too - to avoid using a variable that's been moved out of...
+        (unless every time a move happens, it transfers control to a different block where the old variable's literally not in scope any more...)
+          dunno how feasible/practical that is?
+
+
+-}

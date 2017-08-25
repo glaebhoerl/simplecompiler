@@ -7,7 +7,7 @@ import qualified Text.Earley as E
 import qualified Token as T
 
 data Expression name
-    = Name           !name
+    = Named          !name
     | Literal        !Integer
     | UnaryOperator  !UnaryOperator     !(Expression name)
     | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
@@ -62,7 +62,7 @@ eatNewlines = liftA1 (const ()) (zeroOrMore (E.token T.Newline))
 -- TODO: eat newlines here too
 expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
-    atom        <- ruleCases [liftA1 Name
+    atom        <- ruleCases [liftA1 Named
                                      (E.terminal (\case T.Name   n -> Just n; _ -> Nothing)),
                               liftA1 Literal
                                      (E.terminal (\case T.Number n -> Just n; _ -> Nothing)),

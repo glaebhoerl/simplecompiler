@@ -44,7 +44,7 @@ instance TypeCheckM TypeCheck where
 
 inferExpression :: TypeCheckM m => AST.Expression ResolvedName -> m Type
 inferExpression = \case
-    AST.Name name -> do
+    AST.Named name -> do
         getTypeOfName name
     AST.Literal int -> do
         when (int > fromIntegral (maxBound :: Int64)) $ do
@@ -124,7 +124,7 @@ checkTypes ast = do
 -- this duplicates some information from `inferExpression`, but it doesn't seem worth deduplicating atm
 typeOf :: AST.Expression TypedName -> Type
 typeOf = \case
-    AST.Name name ->
+    AST.Named name ->
         Name.info name
     AST.Literal _ ->
         Int
