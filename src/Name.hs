@@ -91,7 +91,7 @@ instance NameResolveM NameResolve where
                 return (NameWith (Name (map fst rest) name) info)
 
 resolveNames :: AST Text -> Either Error (AST ResolvedName)
-resolveNames ast = runExcept (evalStateT (runNameResolve (resolveNamesIn ast)) [])
+resolveNames = runExcept . evalStateT [] . runNameResolve . resolveNamesIn
 
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node Text -> m (node ResolvedName)

@@ -117,8 +117,8 @@ checkStatement = \case
 
 checkTypes :: AST ResolvedName -> Either Error (AST TypedName)
 checkTypes ast = do
-    nameToType <- runExcept (execStateT (runTypeCheck (mapM_ checkStatement (AST.body ast))) Map.empty)
-    let makeNameTyped (NameWith name _) = NameWith name (assert (Map.lookup name nameToType))
+    nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkStatement . AST.body) ast
+    let makeNameTyped (NameWith name _) = NameWith name (assert (Map.lookup name nameToTypeMap))
     return (fmap makeNameTyped ast)
 
 -- this duplicates some information from `inferExpression`, but it doesn't seem worth deduplicating atm

@@ -11,20 +11,39 @@ import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
 import Control.Monad                    as Reexports        (liftM, forM, forM_, (>=>), (<=<), forever, void, join, filterM, foldM, zipWithM, replicateM, guard, when, unless)
 import Control.Monad.Trans.Class        as Reexports        (MonadTrans (lift))
-import Control.Monad.Trans.Except       as Reexports        (ExceptT, Except, runExceptT, runExcept, throwE, catchE)
-import Control.Monad.Trans.State.Strict as Reexports        (StateT,  State,  runStateT,  runState, evalStateT, evalState, execStateT, execState, get, put, modify')
+import Control.Monad.Trans.Except       as Reexports        (ExceptT, Except, throwE, catchE, runExceptT, runExcept)
+import Control.Monad.Trans.State.Strict as Reexports        (StateT,  State,  get, gets, put, modify')
 import Data.Text                        as Reexports        (Text)
 import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
 
 import Prelude ((/=))
 import qualified Text.Pretty.Simple
-import qualified Data.Text      as Text
-import qualified Data.Text.Lazy as LazyText
+import qualified Data.Text                        as Text
+import qualified Data.Text.Lazy                   as LazyText
+import qualified Control.Monad.Trans.State.Strict as T (runStateT, runState, evalStateT, evalState, execStateT, execState)
 import Control.Applicative (some, many)
 import GHC.Stack (HasCallStack)
 
 type LazyText = LazyText.Text
+
+runStateT :: s -> StateT s m a -> m (a, s)
+runStateT = flip T.runStateT
+
+runState :: s -> State s a -> (a, s)
+runState = flip T.runState
+
+evalStateT :: Monad m => s -> StateT s m a -> m a
+evalStateT = flip T.evalStateT
+
+evalState :: s -> State s a -> a
+evalState = flip T.evalState
+
+execStateT ::  Monad m => s -> StateT s m a -> m s
+execStateT = flip T.execStateT
+
+execState :: s -> State s a -> s
+execState = flip T.execState
 
 head :: [a] -> Maybe a
 head = \case
