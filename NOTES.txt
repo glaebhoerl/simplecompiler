@@ -224,6 +224,7 @@ OTHER
   (transformations, TTTAS, syntactic, ho-rewriting)
   (hindley-milner, boomerang, cassette)
   https://github.com/ermine-language/ermine/blob/master/ermine.cabal
+  https://twanvl.nl/blog/haskell/traversing-syntax-trees
 
 MEMORY MANAGEMENT
   Reference counting? Just leak?

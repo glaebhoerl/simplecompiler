@@ -16,9 +16,9 @@ import Data.Maybe                       as Reexports        (isJust, isNothing, 
 import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
 import Control.Monad                    as Reexports        (liftM, forM, forM_, (>=>), (<=<), forever, void, join, filterM, foldM, zipWithM, replicateM, guard, when, unless)
-import Control.Monad.Trans.Class        as Reexports        (MonadTrans (lift))
-import Control.Monad.Trans.Except       as Reexports        (ExceptT, Except, throwE, catchE, runExceptT, runExcept)
-import Control.Monad.Trans.State.Strict as Reexports        (StateT,  State)
+import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
+import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError, throwError, catchError, runExceptT, runExcept)
+import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
 import Data.Text                        as Reexports        (Text)
 import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
@@ -29,12 +29,12 @@ import Data.Generics.Product.Fields     as Reexports        (field)
 
 -------------------------------------------------------------------------- local imports
 
-import Prelude ((/=))
+import qualified Prelude ((/=))
 import qualified Text.Pretty.Simple
-import qualified Data.Text                        as Text
-import qualified Data.Text.Lazy                   as LazyText
-import qualified Control.Monad.Trans.State.Strict as State       (runStateT, runState, evalStateT, evalState, execStateT, execState, get, put, modify')
-import qualified Data.Generics.Sum.Constructors   as GenericLens (AsConstructor, _Ctor)
+import qualified Data.Text                      as Text
+import qualified Data.Text.Lazy                 as LazyText
+import qualified Control.Monad.State.Strict     as State       (runStateT, runState, evalStateT, evalState, execStateT, execState, get, put, modify')
+import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor, _Ctor)
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
 import Data.Profunctor (Profunctor (lmap, rmap), Choice (right'))
@@ -59,7 +59,7 @@ tail = \case
 (++) = mappend
 
 (!=) :: Eq a => a -> a -> Bool
-(!=) = (/=)
+(!=) = (Prelude./=)
 
 
 
@@ -117,37 +117,6 @@ zeroOrMore = many
 
 
 
--------------------------------------------------------------------------- state monad
-
-getState :: Monad m => StateT s m s
-getState = State.get
-
-setState :: Monad m => s -> StateT s m ()
-setState = State.put
-
-modifyState :: Monad m => (s -> s) -> StateT s m ()
-modifyState = State.modify'
-
-runStateT :: s -> StateT s m a -> m (a, s)
-runStateT = flip State.runStateT
-
-runState :: s -> State s a -> (a, s)
-runState = flip State.runState
-
-evalStateT :: Monad m => s -> StateT s m a -> m a
-evalStateT = flip State.evalStateT
-
-evalState :: s -> State s a -> a
-evalState = flip State.evalState
-
-execStateT ::  Monad m => s -> StateT s m a -> m s
-execStateT = flip State.execStateT
-
-execState :: s -> State s a -> s
-execState = flip State.execState
-
-
-
 -------------------------------------------------------------------------- lenses and prisms
 
 type Lens  outer inner = forall    f.             Functor     f  => (inner  ->  f inner) -> (outer  ->  f outer)
@@ -172,10 +141,11 @@ constructFrom prism inner = fst (unPrism prism) inner
 modifyWhen :: Prism outer inner -> (inner -> inner) -> (outer -> outer)
 modifyWhen prism f outer = maybe outer (constructFrom prism . f) (getWhen prism outer)
 
+-- (the counterpart, `field`, is just re-exported as-is)
 constructor :: forall name inner outer. GenericLens.AsConstructor name inner outer => Prism outer inner
 constructor = GenericLens._Ctor @name
 
-{- I wanted to use `#foo` instead of `@"foo"` syntax, using OverloadedLabels, but turns out it doesn't allow uppercase labels (for constructors)
+{- I wanted to use `#foo` instead of `@"foo"` syntax, using OverloadedLabels, but turns out it doesn't allow uppercase labels (for constructors) :(
 
 data Field (name :: Symbol) = Field
 data Case  (name :: Symbol) = Case
@@ -194,7 +164,9 @@ _Case Case  = GenericLens._Ctor @name
 -}
 
 
--- https://artyom.me/lens-over-tea-5
+-- copied from https://artyom.me/lens-over-tea-5
+-- TODO maybe rewrite these
+-- TODO don't export them
 data Market a b s t = Market (b -> t) (s -> Either t a)
 
 instance Functor (Market a b s) where
@@ -221,6 +193,88 @@ unPrism p =
       bt = runIdentity . bft
       seta = either (Left . runIdentity) Right . setfa
   in (bt, seta)
+
+
+
+-------------------------------------------------------------------------- state monad
+
+runStateT :: s -> StateT s m a -> m (a, s)
+runStateT = flip State.runStateT
+
+runState :: s -> State s a -> (a, s)
+runState = flip State.runState
+
+evalStateT :: Monad m => s -> StateT s m a -> m a
+evalStateT = flip State.evalStateT
+
+evalState :: s -> State s a -> a
+evalState = flip State.evalState
+
+execStateT ::  Monad m => s -> StateT s m a -> m s
+execStateT = flip State.execStateT
+
+execState :: s -> State s a -> s
+execState = flip State.execState
+
+-- these are renamed to avoid conflicts with lens get/set, above
+getState :: MonadState s m => m s
+getState = State.get
+
+setState :: MonadState s m => s -> m ()
+setState = State.put
+
+modifyState :: MonadState s m => (s -> s) -> m ()
+modifyState = State.modify'
+
+setM :: MonadState outer m => Lens outer inner -> inner -> m ()
+setM lens inner = modifyState (set lens inner)
+
+doSetM :: MonadState outer m => Lens outer inner -> m inner -> m ()
+doSetM lens action = do
+    inner <- action
+    setM lens inner
+
+getM :: MonadState outer m => Lens outer inner -> m inner
+getM lens = liftM (get lens) getState
+
+modifyM :: MonadState outer m => Lens outer inner -> (inner -> inner) -> m ()
+modifyM lens f = modifyState (modify lens f)
+
+doModifyM :: MonadState outer m => Lens outer inner -> (inner -> m inner) -> m ()
+doModifyM lens modifyAction = do
+    oldInner <- getM lens
+    newInner <- modifyAction oldInner
+    setM lens newInner
+
+getWhenM :: MonadState outer m => Prism outer inner -> m (Maybe inner)
+getWhenM prism = liftM (getWhen prism) getState
+
+constructFromM :: MonadState outer m => Prism outer inner -> inner -> m ()
+constructFromM prism inner = setState (constructFrom prism inner)
+
+modifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> inner) -> m ()
+modifyWhenM prism f = modifyState (modifyWhen prism f)
+
+-- TODO `zoom` maybe?
+
+(+=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m ()
+lens += n = modifyM lens (+ n)
+
+(-=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m ()
+lens -= n = modifyM lens (subtract n)
+
+(*=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m ()
+lens *= n = modifyM lens (* n)
+
+(/=) :: (MonadState outer m, Fractional inner) => Lens outer inner -> inner -> m ()
+lens /= n = modifyM lens (/ n)
+
+infixr 4 +=, -=, *=, /=
+
+
+
+
+
 
 -------------------------------------------------------------------------- Text stuff
 

@@ -89,11 +89,11 @@ executable stageless
                        llvm-hs,
                        llvm-hs-pure,
                        loc,
+                       mtl,
                        pretty-simple,
                        prettyprinter,
                        profunctors,
-                       text,
-                       transformers
+                       text
   ghc-options:         -W -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
 
 source-repository head

@@ -65,7 +65,7 @@ instance NameResolveM NameResolve where
         context <- getState
         case findInContext name context of
             Just found -> return found
-            Nothing    -> lift (throwE (NameNotFound name (map fst context)))
+            Nothing    -> throwError (NameNotFound name (map fst context))
 
     inNewScope action = NameResolve $ do
         modifyState (prepend (0, Map.empty))
@@ -86,7 +86,7 @@ instance NameResolveM NameResolve where
             [] -> bug "Attempted to bind a name when not in a scope!"
             (scopeID, names) : rest -> do
                 when (Map.member name names) $ do
-                    lift (throwE (NameConflict name (map fst context)))
+                    throwError (NameConflict name (map fst context))
                 setState ((scopeID, Map.insert name info names) : rest)
                 return (NameWith (Name (map fst rest) name) info)
 

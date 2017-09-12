@@ -40,7 +40,7 @@ instance TypeCheckM TypeCheck where
     lookupType name = TypeCheck $ do
         liftM (Map.lookup name) getState
     reportError err = TypeCheck $ do
-        lift (throwE err)
+        throwError err
 
 inferExpression :: TypeCheckM m => AST.Expression ResolvedName -> m Type
 inferExpression = \case
