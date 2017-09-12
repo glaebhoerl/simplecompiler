@@ -19,6 +19,7 @@ import Control.Monad                    as Reexports        (liftM, forM, forM_,
 import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
 import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError, throwError, catchError, runExceptT, runExcept)
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
+import Control.Monad.Tardis             as Reexports        (TardisT, Tardis, MonadTardis, getPast, sendFuture, modifyForwards, getFuture, sendPast, modifyBackwards)
 import Data.Text                        as Reexports        (Text)
 import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
@@ -33,7 +34,8 @@ import qualified Prelude ((/=))
 import qualified Text.Pretty.Simple
 import qualified Data.Text                      as Text
 import qualified Data.Text.Lazy                 as LazyText
-import qualified Control.Monad.State.Strict     as State       (runStateT, runState, evalStateT, evalState, execStateT, execState, get, put, modify')
+import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
+import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis)
 import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor, _Ctor)
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
@@ -223,8 +225,20 @@ getState = State.get
 setState :: MonadState s m => s -> m ()
 setState = State.put
 
+doSetState :: MonadState s m => m s -> m ()
+doSetState action = do
+    state <- action
+    setState state
+
 modifyState :: MonadState s m => (s -> s) -> m ()
 modifyState = State.modify'
+
+-- FIXME probably need to make this strict somewhere to match `modify'`! (also the other doModify... functions)
+doModifyState :: MonadState s m => (s -> m s) -> m ()
+doModifyState modifyAction = do
+    oldState <- getState
+    newState <- modifyAction oldState
+    setState newState
 
 setM :: MonadState outer m => Lens outer inner -> inner -> m ()
 setM lens inner = modifyState (set lens inner)
@@ -252,8 +266,20 @@ getWhenM prism = liftM (getWhen prism) getState
 constructFromM :: MonadState outer m => Prism outer inner -> inner -> m ()
 constructFromM prism inner = setState (constructFrom prism inner)
 
+doConstructFromM :: MonadState outer m => Prism outer inner -> m inner -> m ()
+doConstructFromM prism action = do
+    inner <- action
+    constructFromM prism inner
+
 modifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> inner) -> m ()
 modifyWhenM prism f = modifyState (modifyWhen prism f)
+
+doModifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> m inner) -> m ()
+doModifyWhenM prism modifyAction = do
+    maybeOldInner <- getWhenM prism
+    forM_ maybeOldInner $ \oldInner -> do
+        newInner <- modifyAction oldInner
+        constructFromM prism newInner
 
 -- TODO `zoom` maybe?
 
@@ -272,6 +298,111 @@ lens /= n = modifyM lens (/ n)
 infixr 4 +=, -=, *=, /=
 
 
+
+-------------------------------------------------------------------------- tardis
+
+runTardisT :: (bw, fw) -> TardisT bw fw m a -> m (a, (bw, fw))
+runTardisT = flip Tardis.runTardisT
+
+runTardis :: (bw, fw) -> Tardis bw fw a -> (a, (bw, fw))
+runTardis = flip Tardis.runTardis
+
+evalTardisT :: Monad m => (bw, fw) -> TardisT bw fw m a -> m a
+evalTardisT = flip Tardis.evalTardisT
+
+evalTardis :: (bw, fw) -> Tardis bw fw a -> a
+evalTardis = flip Tardis.evalTardis
+
+execTardisT ::  Monad m => (bw, fw) -> TardisT bw fw m a -> m (bw, fw)
+execTardisT = flip Tardis.execTardisT
+
+execTardis :: (bw, fw) -> Tardis bw fw a -> (bw, fw)
+execTardis = flip Tardis.execTardis
+
+sendFutureM :: MonadTardis bw fw m => Lens fw inner -> inner -> m ()
+sendFutureM lens inner = modifyForwards (set lens inner)
+
+doSendFutureM :: MonadTardis bw fw m => Lens fw inner -> m inner -> m ()
+doSendFutureM lens action = do
+    inner <- action
+    sendFutureM lens inner
+
+getPastM :: MonadTardis bw fw m => Lens fw inner -> m inner
+getPastM lens = liftM (get lens) getPast
+
+modifyForwardsM :: MonadTardis bw fw m => Lens fw inner -> (inner -> inner) -> m ()
+modifyForwardsM lens f = modifyForwards (modify lens f)
+
+doModifyForwardsM :: MonadTardis bw fw m => Lens fw inner -> (inner -> m inner) -> m ()
+doModifyForwardsM lens modifyAction = do
+    oldInner <- getPastM lens
+    newInner <- modifyAction oldInner
+    sendFutureM lens newInner
+
+sendPastM :: MonadTardis bw fw m => Lens bw inner -> inner -> m ()
+sendPastM lens inner = modifyBackwards (set lens inner)
+
+doSendPastM :: MonadTardis bw fw m => Lens bw inner -> m inner -> m ()
+doSendPastM lens action = do
+    inner <- action
+    sendPastM lens inner
+
+getFutureM :: MonadTardis bw fw m => Lens bw inner -> m inner
+getFutureM lens = liftM (get lens) getFuture
+
+modifyBackwardsM :: MonadTardis bw fw m => Lens bw inner -> (inner -> inner) -> m ()
+modifyBackwardsM lens f = modifyBackwards (modify lens f)
+
+doModifyBackwardsM :: MonadTardis bw fw m => Lens bw inner -> (inner -> m inner) -> m ()
+doModifyBackwardsM lens modifyAction = do
+    oldInner <- getFutureM lens
+    newInner <- modifyAction oldInner
+    sendPastM lens newInner
+
+getPastWhenM :: MonadTardis bw fw m => Prism fw inner -> m (Maybe inner)
+getPastWhenM prism = liftM (getWhen prism) getPast
+
+constructFutureFromM :: MonadTardis bw fw m => Prism fw inner -> inner -> m ()
+constructFutureFromM prism inner = sendFuture (constructFrom prism inner)
+
+doConstructFutureFromM :: MonadTardis bw fw m => Prism fw inner -> m inner -> m ()
+doConstructFutureFromM prism action = do
+    inner <- action
+    constructFutureFromM prism inner
+
+modifyForwardsWhenM :: MonadTardis bw fw m => Prism fw inner -> (inner -> inner) -> m ()
+modifyForwardsWhenM prism f = modifyForwards (modifyWhen prism f)
+
+doModifyForwardsWhenM :: MonadTardis bw fw m => Prism fw inner -> (inner -> m inner) -> m ()
+doModifyForwardsWhenM prism modifyAction = do
+    maybeOldInner <- getPastWhenM prism
+    forM_ maybeOldInner $ \oldInner -> do
+        newInner <- modifyAction oldInner
+        constructFutureFromM prism newInner
+
+getFutureWhenM :: MonadTardis bw fw m => Prism bw inner -> m (Maybe inner)
+getFutureWhenM prism = liftM (getWhen prism) getFuture
+
+constructPastFromM :: MonadTardis bw fw m => Prism bw inner -> inner -> m ()
+constructPastFromM prism inner = sendPast (constructFrom prism inner)
+
+doConstructPastFromM :: MonadTardis bw fw m => Prism bw inner -> m inner -> m ()
+doConstructPastFromM prism action = do
+    inner <- action
+    constructPastFromM prism inner
+
+modifyBackwardsWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> inner) -> m ()
+modifyBackwardsWhenM prism f = modifyBackwards (modifyWhen prism f)
+
+doModifyBackwardsWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> m inner) -> m ()
+doModifyBackwardsWhenM prism modifyAction = do
+    maybeOldInner <- getFutureWhenM prism
+    forM_ maybeOldInner $ \oldInner -> do
+        newInner <- modifyAction oldInner
+        constructPastFromM prism newInner
+
+
+-- TODO zoomPast, zoomFuture, `atomically`, swap bw/fw, ...?
 
 
 

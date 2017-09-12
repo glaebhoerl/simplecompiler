@@ -93,6 +93,7 @@ executable stageless
                        pretty-simple,
                        prettyprinter,
                        profunctors,
+                       tardis,
                        text
   ghc-options:         -W -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
 
