@@ -13,12 +13,12 @@ type Path = [Int]
 data Name = Name {
     path      :: !Path,
     givenName :: !Text
-} deriving (Eq, Ord, Show)
+} deriving (Generic, Eq, Ord, Show)
 
 data NameWith info = NameWith {
     name :: !Name,
     info :: !info
-} deriving (Show, Functor)
+} deriving (Generic, Show, Functor)
 
 instance Eq (NameWith info) where
     (==) = (==) `on` name
@@ -29,14 +29,14 @@ instance Ord (NameWith info) where
 data Info = Info {
     bindingType :: !AST.BindingType,
     initializer :: !(AST.Expression ResolvedName)
-} deriving (Eq, Show)
+} deriving (Generic, Eq, Show)
 
 type ResolvedName = NameWith Info
 
 data Error
     = NameNotFound !Text !Path
     | NameConflict !Text !Path
-    deriving Show
+    deriving (Generic, Show)
 
 class Monad m => NameResolveM m where
     lookupName :: Text -> m ResolvedName
@@ -62,32 +62,32 @@ newtype NameResolve a = NameResolve {
 
 instance NameResolveM NameResolve where
     lookupName name = NameResolve $ do
-        context <- get
+        context <- getState
         case findInContext name context of
             Just found -> return found
             Nothing    -> lift (throwE (NameNotFound name (map fst context)))
 
     inNewScope action = NameResolve $ do
-        modify' (prepend (0, Map.empty))
+        modifyState (prepend (0, Map.empty))
         result <- runNameResolve action
-        modify' (assert . tail)
-        context <- get
+        modifyState (assert . tail)
+        context <- getState
         case context of
             (scopeID, names) : rest -> do
                 assertM (scopeID >= 0)
-                put ((scopeID + 1, names) : rest)
+                setState ((scopeID + 1, names) : rest)
                 return result
             [] -> do
                 return result
 
     bindName name info = NameResolve $ do
-        context <- get
+        context <- getState
         case context of
             [] -> bug "Attempted to bind a name when not in a scope!"
             (scopeID, names) : rest -> do
                 when (Map.member name names) $ do
                     lift (throwE (NameConflict name (map fst context)))
-                put ((scopeID, Map.insert name info names) : rest)
+                setState ((scopeID, Map.insert name info names) : rest)
                 return (NameWith (Name (map fst rest) name) info)
 
 resolveNames :: AST Text -> Either Error (AST ResolvedName)

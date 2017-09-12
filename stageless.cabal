@@ -41,12 +41,12 @@ executable stageless
                        InstanceSigs,
                        KindSignatures,
                        LambdaCase,
-                       --^^ <3
+                       --^^^ <3
                        MultiParamTypeClasses,
                        NamedFieldPuns,
                        NegativeLiterals,
                        NoImplicitPrelude,
-                       --^^ `import MyPrelude` instead!
+                       --^^^ `import MyPrelude` instead!
                        OverloadedStrings,
                        PartialTypeSignatures,
                        PatternSynonyms,
@@ -85,11 +85,13 @@ executable stageless
                        bytestring,
                        containers,
                        Earley,
+                       generic-lens,
                        llvm-hs,
                        llvm-hs-pure,
                        loc,
                        pretty-simple,
                        prettyprinter,
+                       profunctors,
                        text,
                        transformers
   ghc-options:         -W -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates

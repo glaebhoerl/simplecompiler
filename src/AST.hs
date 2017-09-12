@@ -12,12 +12,12 @@ data Expression name
     | UnaryOperator  !UnaryOperator     !(Expression name)
     | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
     | Ask            !Text
-    deriving (Eq, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data BindingType
     = Let
     | Var
-    deriving (Eq, Show)
+    deriving (Generic, Eq, Show)
 
 -- TODO: add "plain blocks"
 data Statement name
@@ -31,11 +31,11 @@ data Statement name
     | Break
     | Say        !Text
     | Write      !(Expression name)
-    deriving (Eq, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 newtype Block name = Block {
     body :: [Statement name]
-} deriving (Eq, Show, Functor, Foldable, Traversable)
+} deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 type Expected = Text
 
@@ -62,33 +62,32 @@ eatNewlines = liftA1 (const ()) (zeroOrMore (E.token T.Newline))
 -- TODO: eat newlines here too
 expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
-    atom        <- ruleCases [liftA1 Named
-                                     (E.terminal (\case T.Name   n -> Just n; _ -> Nothing)),
-                              liftA1 Literal
-                                     (E.terminal (\case T.Number n -> Just n; _ -> Nothing)),
-                              liftA1 Ask
-                                     (E.token (T.Name "ask") `followedBy` bracketed T.Round (E.terminal (\case T.Text text -> Just text; _ -> Nothing))),
+    atom        <- ruleCases [liftA1 Named   (E.terminal (getWhen (constructor @"Name"))),
+                              liftA1 Literal (E.terminal (getWhen (constructor @"Number"))),
+                              liftA1 Ask     (E.token (T.Name "ask") `followedBy` bracketed T.Round (E.terminal (getWhen (constructor @"Text")))),
                               bracketed T.Round logicals]
 
-    unary       <- ruleCases [liftA2 UnaryOperator
-                                     (E.terminal (\case T.UnaryOperator op -> Just op; _ -> Nothing))
+    unary       <- ruleCases [liftA2 UnaryOperator (E.terminal (getWhen (constructor @"UnaryOperator")))
                                      atom,
                               atom]
 
     mulDivMod   <- ruleCases [liftA3 BinaryOperator
                                      mulDivMod
+                                     -- TODO prism?
                                      (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Mul, Div, Mod] -> Just binop; _ -> Nothing))
                                      unary,
                               unary]
 
     arithmetic  <- ruleCases [liftA3 BinaryOperator
                                      arithmetic
+                                     -- TODO prism?
                                      (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Add, Sub] -> Just binop; _ -> Nothing))
                                      mulDivMod,
                               mulDivMod]
 
     comparisons <- ruleCases [liftA3 BinaryOperator
                                      comparisons
+                                     -- TODO prism?
                                      (E.terminal (\case T.BinaryOperator binop@ComparisonOperator{} -> Just binop; _ -> Nothing))
                                      arithmetic,
                               arithmetic]
@@ -96,6 +95,7 @@ expressionGrammar = mdo
     -- FIXME we should give && higher precedence than ||, or require parentheses to disambiguate
     logicals    <- ruleCases [liftA3 BinaryOperator
                                      logicals
+                                     -- TODO prism?
                                      (E.terminal (\case T.BinaryOperator binop@LogicalOperator{} -> Just binop; _ -> Nothing))
                                      comparisons,
                               comparisons]
@@ -108,16 +108,16 @@ blockGrammar = mdo
     let keyword kw = E.token (T.Keyword kw)
     -----------------------------------------------------------
     binding <- E.rule $ do
-        letvar <- E.terminal (\case T.Keyword T.K_let -> Just Let; T.Keyword T.K_var -> Just Var; _ -> Nothing)
+        letvar <- E.terminal (\case T.Keyword T.K_let -> Just Let; T.Keyword T.K_var -> Just Var; _ -> Nothing) -- TODO prism?
         _      <- eatNewlines
-        name   <- E.terminal (\case T.Name n -> Just n; _ -> Nothing)
+        name   <- E.terminal (getWhen (constructor @"Name"))
         _      <- eatNewlines
         _      <- E.token T.EqualsSign
         _      <- eatNewlines
         rhs    <- expression
         return (Binding letvar name rhs)
     assign <- E.rule $ do
-        lhs <- E.terminal (\case T.Name n -> Just n; _ -> Nothing)
+        lhs <- E.terminal (getWhen (constructor @"Name"))
         _   <- eatNewlines
         _   <- E.token T.EqualsSign
         _   <- eatNewlines
@@ -156,7 +156,7 @@ blockGrammar = mdo
     break <- E.rule $ do
         _ <- keyword T.K_break
         return Break
-    say   <- E.rule (liftA1 Say   (E.token (T.Name "say")   `followedBy` bracketed T.Round (E.terminal (\case T.Text text -> Just text; _ -> Nothing))))
+    say   <- E.rule (liftA1 Say   (E.token (T.Name "say")   `followedBy` bracketed T.Round (E.terminal (getWhen (constructor @"Text")))))
     write <- E.rule (liftA1 Write (E.token (T.Name "write") `followedBy` bracketed T.Round expression))
     -----------------------------------------------------
     oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, say, write]
@@ -180,7 +180,7 @@ type AST = Block
 data Error
     = Invalid   !Int ![Expected] ![T.Token]
     | Ambiguous ![AST Text]
-    deriving Show
+    deriving (Generic, Show)
 
 parse :: [T.Token] -> Either Error (AST Text)
 parse tokens = case E.fullParses (E.parser blockGrammar) tokens of

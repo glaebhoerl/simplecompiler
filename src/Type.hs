@@ -14,12 +14,12 @@ data Error
     = TypeMismatch
     | AssignToLet
     | LiteralOutOfRange
-    deriving Show
+    deriving (Generic, Show)
 
 data Type
     = Int
     | Bool
-    deriving (Eq, Show)
+    deriving (Generic, Eq, Show)
 
 -- I think we won't really need the binding type or initializer expression after typechecking anyways?
 type TypedName = NameWith Type
@@ -35,10 +35,10 @@ newtype TypeCheck a = TypeCheck {
 
 instance TypeCheckM TypeCheck where
     recordType name type' = TypeCheck $ do
-        liftM (assert . not . Map.member name) get
-        modify' (Map.insert name type')
+        liftM (assert . not . Map.member name) getState
+        modifyState (Map.insert name type')
     lookupType name = TypeCheck $ do
-        liftM (Map.lookup name) get
+        liftM (Map.lookup name) getState
     reportError err = TypeCheck $ do
         lift (throwE err)
 

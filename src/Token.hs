@@ -57,7 +57,7 @@ data Keyword
     | K_return
     | K_var
     | K_while
-    deriving (Eq, Show, Enum, Bounded)
+    deriving (Generic, Eq, Show, Enum, Bounded)
 
 instance Enumerable Keyword
 
@@ -68,21 +68,21 @@ data BracketKind
     = Round
     | Curly
     | Square
-    deriving (Eq, Show, Enum, Bounded)
+    deriving (Generic, Eq, Show, Enum, Bounded)
 
 instance Enumerable BracketKind
 
 data BracketDirection
     = Open
     | Close
-    deriving (Eq, Show, Enum, Bounded)
+    deriving (Generic, Eq, Show, Enum, Bounded)
 
 instance Enumerable BracketDirection
 
 data Bracket = Bracket {
     bracketKind      :: !BracketKind,
     bracketDirection :: !BracketDirection
-} deriving (Eq, Show)
+} deriving (Generic, Eq, Show)
 
 instance Enumerable Bracket where
     enumerate = [Bracket kind dir | kind <- enumerate, dir <- enumerate]
@@ -108,7 +108,7 @@ data Token
     | Comma
     | Semicolon
     | Newline
-    deriving (Eq, Show)
+    deriving (Generic, Eq, Show)
 
 instance TextRepresentation Token where
     toText = \case
@@ -203,7 +203,7 @@ tokens = mdo
 data Error
     = Invalid
     | Ambiguous ![[Token]]
-    deriving Show
+    deriving (Generic, Show)
 
 tokenize :: Text -> Either Error [Token]
 tokenize text' = case fst (E.fullParses (E.parser tokens) text') of
