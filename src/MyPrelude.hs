@@ -332,9 +332,10 @@ backSetState :: MonadTardis bw fw m => bw -> m ()
 backSetState = Tardis.sendPast
 
 doBackSetState :: MonadTardis bw fw m => m bw -> m ()
-doBackSetState action = do
-    state <- action
+doBackSetState action = mdo
     backSetState state
+    state <- action
+    return ()
 
 backModifyState :: MonadTardis bw fw m => (bw -> bw) -> m ()
 backModifyState = Tardis.modifyBackwards
@@ -350,9 +351,10 @@ backSetM :: MonadTardis bw fw m => Lens bw inner -> inner -> m ()
 backSetM lens inner = Tardis.modifyBackwards (set lens inner)
 
 doBackSetM :: MonadTardis bw fw m => Lens bw inner -> m inner -> m ()
-doBackSetM lens action = do
-    inner <- action
+doBackSetM lens action = mdo
     backSetM lens inner
+    inner <- action
+    return ()
 
 backGetM :: MonadTardis bw fw m => Lens bw inner -> m inner
 backGetM lens = liftM (get lens) Tardis.getFuture
@@ -374,9 +376,10 @@ backConstructFromM :: MonadTardis bw fw m => Prism bw inner -> inner -> m ()
 backConstructFromM prism inner = Tardis.sendPast (constructFrom prism inner)
 
 doBackConstructFromM :: MonadTardis bw fw m => Prism bw inner -> m inner -> m ()
-doBackConstructFromM prism action = do
-    inner <- action
+doBackConstructFromM prism action = mdo
     backConstructFromM prism inner
+    inner <- action
+    return ()
 
 backModifyWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> inner) -> m ()
 backModifyWhenM prism f = Tardis.modifyBackwards (modifyWhen prism f)
