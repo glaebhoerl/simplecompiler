@@ -16,10 +16,11 @@ import Data.Maybe                       as Reexports        (isJust, isNothing, 
 import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
 import Control.Monad                    as Reexports        (liftM, forM, forM_, (>=>), (<=<), forever, void, join, filterM, foldM, zipWithM, replicateM, guard, when, unless)
+import Control.Monad.Fix                as Reexports        (MonadFix   (mfix))
 import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
 import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError, throwError, catchError, runExceptT, runExcept)
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
-import Control.Monad.Tardis             as Reexports        (TardisT, Tardis, MonadTardis, getPast, sendFuture, modifyForwards, getFuture, sendPast, modifyBackwards)
+import Control.Monad.Tardis             as Reexports        (TardisT, Tardis, MonadTardis)
 import Data.Text                        as Reexports        (Text)
 import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
@@ -35,7 +36,8 @@ import qualified Text.Pretty.Simple
 import qualified Data.Text                      as Text
 import qualified Data.Text.Lazy                 as LazyText
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
-import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis)
+import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis,
+                                                                getPast, sendFuture, modifyForwards, getFuture, sendPast, modifyBackwards)
 import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor, _Ctor)
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
@@ -319,87 +321,74 @@ execTardisT = flip Tardis.execTardisT
 execTardis :: (bw, fw) -> Tardis bw fw a -> (bw, fw)
 execTardis = flip Tardis.execTardis
 
-sendFutureM :: MonadTardis bw fw m => Lens fw inner -> inner -> m ()
-sendFutureM lens inner = modifyForwards (set lens inner)
+instance MonadFix m => MonadState fw (TardisT bw fw m) where
+    get = Tardis.getPast
+    put = Tardis.sendFuture
 
-doSendFutureM :: MonadTardis bw fw m => Lens fw inner -> m inner -> m ()
-doSendFutureM lens action = do
+backGetState :: MonadTardis bw fw m => m bw
+backGetState = Tardis.getFuture
+
+backSetState :: MonadTardis bw fw m => bw -> m ()
+backSetState = Tardis.sendPast
+
+doBackSetState :: MonadTardis bw fw m => m bw -> m ()
+doBackSetState action = do
+    state <- action
+    backSetState state
+
+backModifyState :: MonadTardis bw fw m => (bw -> bw) -> m ()
+backModifyState = Tardis.modifyBackwards
+
+doBackModifyState :: MonadTardis bw fw m => (bw -> m bw) -> m ()
+doBackModifyState modifyAction = mdo
+    backSetState newState
+    newState <- modifyAction oldState
+    oldState <- backGetState
+    return ()
+
+backSetM :: MonadTardis bw fw m => Lens bw inner -> inner -> m ()
+backSetM lens inner = Tardis.modifyBackwards (set lens inner)
+
+doBackSetM :: MonadTardis bw fw m => Lens bw inner -> m inner -> m ()
+doBackSetM lens action = do
     inner <- action
-    sendFutureM lens inner
+    backSetM lens inner
 
-getPastM :: MonadTardis bw fw m => Lens fw inner -> m inner
-getPastM lens = liftM (get lens) getPast
+backGetM :: MonadTardis bw fw m => Lens bw inner -> m inner
+backGetM lens = liftM (get lens) Tardis.getFuture
 
-modifyForwardsM :: MonadTardis bw fw m => Lens fw inner -> (inner -> inner) -> m ()
-modifyForwardsM lens f = modifyForwards (modify lens f)
+backModifyM :: MonadTardis bw fw m => Lens bw inner -> (inner -> inner) -> m ()
+backModifyM lens f = Tardis.modifyBackwards (modify lens f)
 
-doModifyForwardsM :: MonadTardis bw fw m => Lens fw inner -> (inner -> m inner) -> m ()
-doModifyForwardsM lens modifyAction = do
-    oldInner <- getPastM lens
+doBackModifyM :: MonadTardis bw fw m => Lens bw inner -> (inner -> m inner) -> m ()
+doBackModifyM lens modifyAction = mdo
+    backSetM lens newInner
     newInner <- modifyAction oldInner
-    sendFutureM lens newInner
+    oldInner <- backGetM lens
+    return ()
 
-sendPastM :: MonadTardis bw fw m => Lens bw inner -> inner -> m ()
-sendPastM lens inner = modifyBackwards (set lens inner)
+backGetWhenM :: MonadTardis bw fw m => Prism bw inner -> m (Maybe inner)
+backGetWhenM prism = liftM (getWhen prism) Tardis.getFuture
 
-doSendPastM :: MonadTardis bw fw m => Lens bw inner -> m inner -> m ()
-doSendPastM lens action = do
+backConstructFromM :: MonadTardis bw fw m => Prism bw inner -> inner -> m ()
+backConstructFromM prism inner = Tardis.sendPast (constructFrom prism inner)
+
+doBackConstructFromM :: MonadTardis bw fw m => Prism bw inner -> m inner -> m ()
+doBackConstructFromM prism action = do
     inner <- action
-    sendPastM lens inner
+    backConstructFromM prism inner
 
-getFutureM :: MonadTardis bw fw m => Lens bw inner -> m inner
-getFutureM lens = liftM (get lens) getFuture
+backModifyWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> inner) -> m ()
+backModifyWhenM prism f = Tardis.modifyBackwards (modifyWhen prism f)
 
-modifyBackwardsM :: MonadTardis bw fw m => Lens bw inner -> (inner -> inner) -> m ()
-modifyBackwardsM lens f = modifyBackwards (modify lens f)
-
-doModifyBackwardsM :: MonadTardis bw fw m => Lens bw inner -> (inner -> m inner) -> m ()
-doModifyBackwardsM lens modifyAction = do
-    oldInner <- getFutureM lens
-    newInner <- modifyAction oldInner
-    sendPastM lens newInner
-
-getPastWhenM :: MonadTardis bw fw m => Prism fw inner -> m (Maybe inner)
-getPastWhenM prism = liftM (getWhen prism) getPast
-
-constructFutureFromM :: MonadTardis bw fw m => Prism fw inner -> inner -> m ()
-constructFutureFromM prism inner = sendFuture (constructFrom prism inner)
-
-doConstructFutureFromM :: MonadTardis bw fw m => Prism fw inner -> m inner -> m ()
-doConstructFutureFromM prism action = do
-    inner <- action
-    constructFutureFromM prism inner
-
-modifyForwardsWhenM :: MonadTardis bw fw m => Prism fw inner -> (inner -> inner) -> m ()
-modifyForwardsWhenM prism f = modifyForwards (modifyWhen prism f)
-
-doModifyForwardsWhenM :: MonadTardis bw fw m => Prism fw inner -> (inner -> m inner) -> m ()
-doModifyForwardsWhenM prism modifyAction = do
-    maybeOldInner <- getPastWhenM prism
-    forM_ maybeOldInner $ \oldInner -> do
+doBackModifyWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> m inner) -> m ()
+doBackModifyWhenM prism modifyAction = mdo
+    forM_ maybeOldInner $ \oldInner -> mdo
+        backConstructFromM prism newInner
         newInner <- modifyAction oldInner
-        constructFutureFromM prism newInner
-
-getFutureWhenM :: MonadTardis bw fw m => Prism bw inner -> m (Maybe inner)
-getFutureWhenM prism = liftM (getWhen prism) getFuture
-
-constructPastFromM :: MonadTardis bw fw m => Prism bw inner -> inner -> m ()
-constructPastFromM prism inner = sendPast (constructFrom prism inner)
-
-doConstructPastFromM :: MonadTardis bw fw m => Prism bw inner -> m inner -> m ()
-doConstructPastFromM prism action = do
-    inner <- action
-    constructPastFromM prism inner
-
-modifyBackwardsWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> inner) -> m ()
-modifyBackwardsWhenM prism f = modifyBackwards (modifyWhen prism f)
-
-doModifyBackwardsWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> m inner) -> m ()
-doModifyBackwardsWhenM prism modifyAction = do
-    maybeOldInner <- getFutureWhenM prism
-    forM_ maybeOldInner $ \oldInner -> do
-        newInner <- modifyAction oldInner
-        constructPastFromM prism newInner
+        return ()
+    maybeOldInner <- backGetWhenM prism
+    return ()
 
 
 -- TODO zoomPast, zoomFuture, `atomically`, swap bw/fw, ...?
@@ -424,6 +413,7 @@ prettyPrint = Text.Pretty.Simple.pPrintLightBg
 
 -------------------------------------------------------------------------- asserts
 
+{-# WARNING todo "TODO" #-}
 todo :: HasCallStack => a
 todo = error "TODO"
 
