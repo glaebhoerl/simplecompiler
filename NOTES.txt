@@ -171,6 +171,7 @@ PRETTY PRINTING
   https://hackage.haskell.org/package/prettyprinter
 
 PRETTY PRINTING of Show instances: groom, pretty-show, show-prettyprint, pretty-simple
+  http://hackage.haskell.org/package/reprinter modify AST and re-print it preserving original layout, generically
 
 NAME MANAGEMENT: either zabt or bound
 
@@ -225,6 +226,7 @@ OTHER
   (hindley-milner, boomerang, cassette)
   https://github.com/ermine-language/ermine/blob/master/ermine.cabal
   https://twanvl.nl/blog/haskell/traversing-syntax-trees
+  http://hackage.haskell.org/package/brick CLI "GUI" library
 
 MEMORY MANAGEMENT
   Reference counting? Just leak?

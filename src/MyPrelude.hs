@@ -123,6 +123,10 @@ zeroOrMore = many
 
 -------------------------------------------------------------------------- lenses and prisms
 
+-- TODO
+-- composing a lens with a prism gives a traversal, we should probably have that too
+-- which functions can/should be generalized?
+
 type Lens  outer inner = forall    f.             Functor     f  => (inner  ->  f inner) -> (outer  ->  f outer)
 
 type Prism outer inner = forall to f. (Choice to, Applicative f) => (inner `to` f inner) -> (outer `to` f outer)
@@ -321,6 +325,7 @@ execTardisT = flip Tardis.execTardisT
 execTardis :: (bw, fw) -> Tardis bw fw a -> (bw, fw)
 execTardis = flip Tardis.execTardis
 
+-- orphan but I don't care
 instance MonadFix m => MonadState fw (TardisT bw fw m) where
     get = Tardis.getPast
     put = Tardis.sendFuture
@@ -444,14 +449,14 @@ instance Assert (Maybe a) where
     type AssertResult (Maybe a) = a
     msgAssert msg = fromMaybe (bug ("Failed assertion! " ++ msg))
 
-{- remove the Show constraint if it turns out to be problematic -}
+{- remove the Show constraint if it turns out to be problematic! -}
 instance Show e => Assert (Either e a) where
     type AssertResult (Either e a) = a
     msgAssert msg = fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e))
 
 
 
--------------------------------------------------------------------------- widely applicable project-specific definitions
+-------------------------------------------------------------------------- widely-used project-specific definitions
 
 class Enumerable a where
     enumerate :: [a]
