@@ -331,22 +331,25 @@ data BackwardsState = BackwardsState {
     enclosingContinuations :: !(Maybe BackwardsState)
 } deriving Generic
 
-newID :: Translate (ID node)
-newID = do
+data EvenOdd = Even | Odd deriving Enum
+
+newID :: EvenOdd -> Translate (ID node)
+newID evenOdd = do
     -- NOTE incrementing first is significant, ID 0 is the root block!
-    (field @"lastID") += 1
+    modifyM (field @"lastID") $ \lastID ->
+        lastID + (if fromEnum evenOdd == lastID % 2 then 2 else 1)
     new <- getM (field @"lastID")
     return (ID new)
 
 newArgumentIDs :: Type Block -> Translate [Name Expression]
 newArgumentIDs (Parameters argTypes) = do
     forM argTypes $ \argType -> do
-        argID <- newID
+        argID <- newID Odd
         return (Name argID argType)
 
 pushBlock :: Type Block -> Translate ()
 pushBlock params = do
-    blockID <- newID
+    blockID <- newID Even
     args    <- newArgumentIDs params
     modifyM         (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID args [] Nothing (Just previouslyInnermost))
     backModifyState (assert . enclosingContinuations)
@@ -371,7 +374,7 @@ instance TranslateM Translate where
 
     emitLet :: Expression -> Translate (Name Expression)
     emitLet expr = do
-        letID <- newID
+        letID <- newID Odd
         let name = Name letID (typeOf expr)
         emitStatement (Let name expr)
         return name
@@ -394,7 +397,7 @@ instance TranslateM Translate where
         let nextBlockParams = case emittedContinuation of
                 Just blockName -> nameType blockName
                 Nothing        -> Parameters [] -- TODO this means we're in dead code; should we do anything about it??
-        nextBlockID   <- newID -- FIXME we should skip allocating a block if we're at the end of a parent block!
+        nextBlockID   <- newID Even -- FIXME we should skip allocating a block if we're at the end of a parent block!
         nextBlockArgs <- newArgumentIDs nextBlockParams
         setM (field @"innermostBlock") (BlockState nextBlockID nextBlockArgs [] Nothing enclosingBlock)
         backModifyState $ \BackwardsState { nextBlock = _, thisBlock = prevThisBlock, enclosingContinuations } ->

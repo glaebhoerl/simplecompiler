@@ -38,7 +38,7 @@ import qualified Data.Text                      as Text
 import qualified Data.Text.Lazy                 as LazyText
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
 import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis,
-                                                                getPast, sendFuture, modifyForwards, getFuture, sendPast, modifyBackwards)
+                                                                getPast, sendFuture, {-modifyForwards-}, getFuture, sendPast, modifyBackwards)
 import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor, _Ctor)
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
@@ -65,6 +65,9 @@ tail = \case
 
 (!=) :: Eq a => a -> a -> Bool
 (!=) = (Prelude./=)
+
+(%) :: Integral num => num -> num -> num
+(%) = mod
 
 
 
