@@ -2,6 +2,8 @@ module Main where
 
 import MyPrelude
 
+import qualified Data.Text.Prettyprint.Doc.Render.Terminal as P
+
 import qualified Token
 --import Token (Token)
 import qualified AST
@@ -30,4 +32,19 @@ main = do
            Name.resolveNames     `thenTry`
            Type.checkTypes       `thenTry`
            (Right @() . IR.translate)
-    mapM_ (putStrLn . showText . IR.render) ir
+    mapM_ (P.putDoc . fmap (ansiStyle . IR.defaultStyle) . IR.render) ir
+
+ansiStyle :: IR.Style -> P.AnsiStyle
+ansiStyle IR.Style { IR.color, IR.isDull, IR.isBold, IR.isItalic, IR.isUnderlined } = style where
+    style     = maybe mempty (fromColor . mapColor) color ++ fontStyle
+    fontStyle = mconcat (catMaybes [justIf isBold P.bold, justIf isItalic P.italicized, justIf isUnderlined P.underlined])
+    fromColor = if not isDull then P.colorDull else P.color -- FIXME the `not` is required because otherwise it's backwards, but where's the bug?
+    mapColor  = \case
+        IR.Black   -> P.Black
+        IR.White   -> P.White
+        IR.Red     -> P.Red
+        IR.Green   -> P.Green
+        IR.Blue    -> P.Blue
+        IR.Cyan    -> P.Cyan
+        IR.Magenta -> P.Magenta
+        IR.Yellow  -> P.Yellow

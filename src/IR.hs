@@ -1,4 +1,8 @@
-module IR (Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), returnToCaller, typeOf, translate, render) where
+module IR (
+    Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), returnToCaller, typeOf, translate,
+    Info (..), LiteralType (..), IdentInfo (..), IdentName (..), render, Style (..), Color (..), defaultStyle
+) where
+
 
 import MyPrelude hiding (BinaryOperator (..))
 
@@ -8,6 +12,9 @@ import qualified MyPrelude as AST (BinaryOperator (..))
 import qualified AST       as AST
 import qualified Name      as AST
 import qualified Type      as AST
+
+
+---------------------------------------------------------------------------------------------------- TYPE DEFINITIONS
 
 data Type node where
     Int        :: Type Expression
@@ -92,6 +99,11 @@ instance TypeOf Expression where
 
 instance TypeOf Block where
     typeOf = Parameters . map nameType . arguments
+
+
+
+
+---------------------------------------------------------------------------------------------------- TRANSLATION FRONTEND
 
 class Monad m => TranslateM m where
     translateName       :: AST.TypedName -> m (Name Expression)
@@ -198,40 +210,9 @@ translateBlock :: TranslateM m => AST.Block AST.TypedName -> m ()
 translateBlock (AST.Block statements) = mapM_ translateStatement statements
 
 
-{- EXAMPLE INPUT
-main1
-if (foo) {
-    body1
-}
-main2
-if (foo2) {
-    body2
-}
-main3
--}
 
-{- EXAMPLE OUTPUT
-block main() {
-    main1
-    block join1() {
-        main2
-        block join2() {
-            main3
-            return
-        }
-        block if2() {
-            body2
-            jump join2()
-        }
-        branch foo2 [if2, join2]
-    }
-    block if1() {
-        body1
-        jump join1()
-    }
-    branch foo [if1, join1]
-}
--}
+
+---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND
 
 translate :: AST.Block AST.TypedName -> Block
 translate = evalTardis (backwardsState, forwardsState) . runTranslate . translateRootBlock
@@ -364,84 +345,194 @@ instance TranslateM Translate where
                 assertM (params == nameType nextBlockName)
                 return nextBlockName
 
--- TODO
--- We could add some kind of formatting (via the annotation).
--- Degrees of freedom:
---  * foreground color
---  * background color (very sparingly if at all...)
---  * in ANSI terminals also: vivid vs. dull
---  * style (bold, italic, underlined)
--- Things we could distinguish:
---  * different classes (keyword, literal, term vs. type vs. block identifier, ...)
---  * definitions vs. uses
---  * different types
---  * different identifiers ("semantic highlighting")
--- One idea:
---  * Definitions are underlined (uses are not).
---  * Keywords (and syntax?) are bold and black.
---  * Block identifiers are italicized (term identifiers are not).
---  * Colors are used to differentiate either different types or different identifiers.
---  * What about type names? Use dull colors, other things vivid?
+{- EXAMPLE INPUT
+main1
+if (foo) {
+    body1
+}
+main2
+if (foo2) {
+    body2
+}
+main3
+-}
 
-render :: Block -> Doc a
+{- EXAMPLE OUTPUT
+block main() {
+    main1
+    block join1() {
+        main2
+        block join2() {
+            main3
+            return
+        }
+        block if2() {
+            body2
+            jump join2()
+        }
+        branch foo2 [if2, join2]
+    }
+    block if1() {
+        body1
+        jump join1()
+    }
+    branch foo [if1, join1]
+}
+-}
+
+
+
+---------------------------------------------------------------------------------------------------- PRETTY PRINTING
+
+-- TODO bikeshed the names of all these things
+
+data Info
+    = Keyword
+    | Brace
+    | Paren
+    | DefineEquals
+    | AssignEquals
+    | Colon
+    | UserOperator
+    | Literal'   !LiteralType
+    | Sigil      !IdentInfo
+    | Identifier !IdentInfo
+    deriving (Generic, Eq, Show)
+
+data LiteralType
+    = NumberLiteral
+    | BoolLiteral
+    | StringLiteral
+    deriving (Generic, Eq, Show)
+
+data IdentInfo = IdentInfo {
+    isDefinition :: !Bool,
+    identName    :: !IdentName
+} deriving (Generic, Eq, Show)
+
+data IdentName
+    = LetName    !(Name Expression)
+    | BlockName  !(Name Block)
+    | TypeName   !(Type Expression)
+    | GlobalName !Text
+    deriving (Generic, Eq, Show)
+
+render :: Block -> Doc Info
 render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
+    note         = P.annotate
+    keyword      = note Keyword
+    operator     = note UserOperator
+    colon        = note Colon ":"
+    defineEquals = note DefineEquals "="
+    assignEquals = note AssignEquals "="
+    string       = note (Literal' StringLiteral) . P.dquotes . P.pretty
+    number       = note (Literal' NumberLiteral) . P.pretty
+    builtin      = renderName . IdentInfo False . GlobalName
+    type'        = renderName . IdentInfo False . TypeName
+    blockID def  = renderName . IdentInfo def   . BlockName
+    letID   def  = renderName . IdentInfo def   . LetName
+    braces  doc  = note Brace "{" ++ doc ++ note Brace "}"
+    parens  doc  = note Paren "(" ++ doc ++ note Paren ")"
+
     renderBody statements transfer = mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
 
     renderStatement = \case
-        BlockDecl name block -> "block " ++ renderBlockID (ident name) ++ renderArguments (arguments block) ++ " " ++ P.braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
-        Let       name expr  -> "let "   ++ renderTypedName name     ++ " = " ++ renderExpr expr
-        Assign    name value -> renderLetID (ident name) ++ " = " ++ renderValue value
-        Say       text       -> "say"   ++ P.parens (P.dquotes (P.pretty text))
-        Write     value      -> "write" ++ P.parens (renderValue value)
+        BlockDecl name block -> keyword "block"  ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
+        Let       name expr  -> keyword "let"    ++ " " ++ typedName name ++ " " ++ defineEquals ++ " " ++ renderExpr expr
+        Assign    name value -> letID False name ++ " " ++ assignEquals ++ " " ++ renderValue value
+        Say       text       -> builtin "say"    ++ parens (string text)
+        Write     value      -> builtin "write"  ++ parens (renderValue value)
 
     renderTransfer = \case
-        Jump         target  -> "jump "   ++ renderTarget target
-        Branch value targets -> "branch " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
+        Jump         target  -> keyword "jump"   ++ " " ++ renderTarget target
+        Branch value targets -> keyword "branch" ++ " " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
 
-    renderTarget target = renderBlockID (ident (targetBlock target)) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+    renderTarget target = blockID False (targetBlock target) ++ parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
 
     renderExpr = \case
         Value              value            -> renderValue value
-        UnaryOperator      op value         -> renderUnaryOp op ++ renderValue value
-        ArithmeticOperator value1 op value2 -> renderValue value1 ++ " " ++ renderArithOp op ++ " " ++ renderValue value2
-        ComparisonOperator value1 op value2 -> renderValue value1 ++ " " ++ renderCmpOp   op ++ " " ++ renderValue value2
-        Ask                text             -> "ask" ++ P.parens (P.dquotes (P.pretty text))
+        UnaryOperator      op value         -> unaryOp op ++ renderValue value
+        ArithmeticOperator value1 op value2 -> renderValue value1 ++ " " ++ arithOp op ++ " " ++ renderValue value2
+        ComparisonOperator value1 op value2 -> renderValue value1 ++ " " ++ cmpOp   op ++ " " ++ renderValue value2
+        Ask                text             -> builtin "ask" ++ parens (string text)
 
     renderValue = \case
-        Named   name   -> renderLetID (ident name)
-        Literal number -> P.pretty number
+        Named   name -> letID False name
+        Literal num  -> number num
 
-    renderLetID :: ID Expression -> Doc a
-    renderLetID = \case
-        ASTName astName -> "$" ++ P.pretty (AST.givenName astName)
-        ID      number  -> "$" ++ P.pretty number
+    renderName :: IdentInfo -> Doc Info
+    renderName info = note (Sigil info) sigil ++ note (Identifier info) name where
+        (sigil, name) = case identName info of
+            LetName    n -> ("$", renderIdent (ident n))
+            BlockName  n -> ("%", renderIdent (ident n))
+            TypeName   t -> ("",  P.pretty (show t))
+            GlobalName n -> ("",  P.pretty n)
 
-    renderBlockID :: ID Block -> Doc a
-    renderBlockID = \case
-        ID     number -> "%" ++ P.pretty number
-        Return        -> "%return"
+    renderIdent = \case
+        ASTName n -> P.pretty (AST.givenName n)
+        ID      i -> P.pretty i
+        Return    -> "return"
 
-    renderArguments args = P.parens (P.hsep (P.punctuate "," (map renderTypedName args)))
+    argumentList args = parens (P.hsep (P.punctuate "," (map typedName args)))
 
-    renderTypedName name = renderLetID (ident name) ++ ": " ++ renderType (nameType name)
-
-    renderType :: Type Expression -> Doc a
-    renderType = P.pretty . show
+    typedName name = letID True name ++ colon ++ " " ++ type' (nameType name)
 
     -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
-    renderUnaryOp = \case
+    unaryOp = operator . \case
         Not    -> "!"
         Negate -> "-"
-    renderArithOp = \case
+    arithOp = operator . \case
         Add -> "+"
         Sub -> "-"
         Mul -> "*"
         Div -> "/"
         Mod -> "%"
-    renderCmpOp = \case
+    cmpOp = operator . \case
         Equal        -> "=="
         NotEqual     -> "!="
         Less         -> "<"
         LessEqual    -> "<="
         Greater      -> ">"
         GreaterEqual -> ">="
+
+data Style = Style {
+    color        :: !(Maybe Color),
+    isDull       :: !Bool,
+    isBold       :: !Bool,
+    isItalic     :: !Bool,
+    isUnderlined :: !Bool
+} deriving (Generic, Eq, Show)
+
+data Color
+    = Black
+    | White
+    | Red
+    | Green
+    | Blue
+    | Cyan
+    | Magenta
+    | Yellow
+    deriving (Generic, Eq, Show)
+
+defaultStyle :: Info -> Style
+defaultStyle = \case
+    Keyword          -> plain { isBold = True }
+    Brace            -> plain { isBold = True }
+    Paren            -> plain
+    DefineEquals     -> plain { isBold = True }
+    AssignEquals     -> plain
+    Colon            -> plain { isBold = True }
+    UserOperator     -> plain
+    Literal'   type' -> plain { isDull = True, color = literalColor type' }
+    Sigil      info  -> plain { isUnderlined = isDefinition info }
+    Identifier info  -> plain { isUnderlined = isDefinition info,
+                                --isItalic     = isJust (getWhen (constructor @"BlockName") (identName info)),
+                                --isDull       = isJust (getWhen (constructor @"TypeName")  (identName info)),
+                                color        = Nothing } -- TODO, based on type or ID!
+    where
+        plain = Style Nothing False False False False
+        literalColor = \case
+            StringLiteral -> Just Red
+            NumberLiteral -> Just Blue
+            BoolLiteral   -> Just Cyan
+

@@ -79,6 +79,12 @@ prepend = (:)
 single :: a -> [a]
 single = \a -> [a]
 
+singleIf ::  Bool -> a -> [a]
+singleIf b a = if b then [a] else []
+
+justIf :: Bool -> a -> Maybe a
+justIf b a = if b then Just a else Nothing
+
 left :: Either a b -> Maybe a
 left = either Just (const Nothing)
 
@@ -99,7 +105,6 @@ fromRightOr f = either f id
 
 bool :: a -> a -> Bool -> a
 bool false true b = if b then true else false
-
 
 
 -------------------------------------------------------------------------- Applicative and Alternative

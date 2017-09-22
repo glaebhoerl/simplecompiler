@@ -92,6 +92,7 @@ executable stageless
                        mtl,
                        pretty-simple,
                        prettyprinter,
+                       prettyprinter-ansi-terminal,
                        profunctors,
                        tardis,
                        text
