@@ -93,87 +93,6 @@ instance TypeOf Expression where
 instance TypeOf Block where
     typeOf = Parameters . map nameType . arguments
 
--- TODO
--- We could add some kind of formatting (via the annotation).
--- Degrees of freedom:
---  * foreground color
---  * background color (very sparingly if at all...)
---  * in ANSI terminals also: vivid vs. dull
---  * style (bold, italic, underlined)
--- Things we could distinguish:
---  * different classes (keyword, literal, term vs. type vs. block identifier, ...)
---  * definitions vs. uses
---  * different types
---  * different identifiers ("semantic highlighting")
--- One idea:
---  * Definitions are underlined (uses are not).
---  * Keywords (and syntax?) are bold and black.
---  * Block identifiers are italicized (term identifiers are not).
---  * Colors are used to differentiate either different types or different identifiers.
---  * What about type names? Use dull colors, other things vivid?
-render :: Block -> Doc a
-render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
-    renderBody statements transfer = mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
-
-    renderStatement = \case
-        BlockDecl name block -> "block " ++ renderBlockID (ident name) ++ renderArguments (arguments block) ++ " " ++ P.braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
-        Let       name expr  -> "let "   ++ renderTypedName name     ++ " = " ++ renderExpr expr
-        Assign    name value -> renderLetID (ident name) ++ " = " ++ renderValue value
-        Say       text       -> "say"   ++ P.parens (P.dquotes (P.pretty text))
-        Write     value      -> "write" ++ P.parens (renderValue value)
-
-    renderTransfer = \case
-        Jump         target  -> "jump "   ++ renderTarget target
-        Branch value targets -> "branch " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
-
-    renderTarget target = renderBlockID (ident (targetBlock target)) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
-
-    renderExpr = \case
-        Value              value            -> renderValue value
-        UnaryOperator      op value         -> renderUnaryOp op ++ renderValue value
-        ArithmeticOperator value1 op value2 -> renderValue value1 ++ " " ++ renderArithOp op ++ " " ++ renderValue value2
-        ComparisonOperator value1 op value2 -> renderValue value1 ++ " " ++ renderCmpOp   op ++ " " ++ renderValue value2
-        Ask                text             -> "ask" ++ P.parens (P.dquotes (P.pretty text))
-
-    renderValue = \case
-        Named   name   -> renderLetID (ident name)
-        Literal number -> P.pretty number
-
-    renderLetID :: ID Expression -> Doc a
-    renderLetID = \case
-        ASTName astName -> "$" ++ P.pretty (AST.givenName astName)
-        ID      number  -> "$" ++ P.pretty number
-
-    renderBlockID :: ID Block -> Doc a
-    renderBlockID = \case
-        ID     number -> "%" ++ P.pretty number
-        Return        -> "%return"
-
-    renderArguments args = P.parens (P.hsep (P.punctuate "," (map renderTypedName args)))
-
-    renderTypedName name = renderLetID (ident name) ++ ": " ++ renderType (nameType name)
-
-    renderType :: Type Expression -> Doc a
-    renderType = P.pretty . show
-
-    -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
-    renderUnaryOp = \case
-        Not    -> "!"
-        Negate -> "-"
-    renderArithOp = \case
-        Add -> "+"
-        Sub -> "-"
-        Mul -> "*"
-        Div -> "/"
-        Mod -> "%"
-    renderCmpOp = \case
-        Equal        -> "=="
-        NotEqual     -> "!="
-        Less         -> "<"
-        LessEqual    -> "<="
-        Greater      -> ">"
-        GreaterEqual -> ">="
-
 class Monad m => TranslateM m where
     translateName       :: AST.TypedName -> m (Name Expression)
     emitStatement       :: Statement     -> m ()
@@ -444,3 +363,85 @@ instance TranslateM Translate where
             Just nextBlockName -> do
                 assertM (params == nameType nextBlockName)
                 return nextBlockName
+
+-- TODO
+-- We could add some kind of formatting (via the annotation).
+-- Degrees of freedom:
+--  * foreground color
+--  * background color (very sparingly if at all...)
+--  * in ANSI terminals also: vivid vs. dull
+--  * style (bold, italic, underlined)
+-- Things we could distinguish:
+--  * different classes (keyword, literal, term vs. type vs. block identifier, ...)
+--  * definitions vs. uses
+--  * different types
+--  * different identifiers ("semantic highlighting")
+-- One idea:
+--  * Definitions are underlined (uses are not).
+--  * Keywords (and syntax?) are bold and black.
+--  * Block identifiers are italicized (term identifiers are not).
+--  * Colors are used to differentiate either different types or different identifiers.
+--  * What about type names? Use dull colors, other things vivid?
+
+render :: Block -> Doc a
+render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
+    renderBody statements transfer = mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
+
+    renderStatement = \case
+        BlockDecl name block -> "block " ++ renderBlockID (ident name) ++ renderArguments (arguments block) ++ " " ++ P.braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
+        Let       name expr  -> "let "   ++ renderTypedName name     ++ " = " ++ renderExpr expr
+        Assign    name value -> renderLetID (ident name) ++ " = " ++ renderValue value
+        Say       text       -> "say"   ++ P.parens (P.dquotes (P.pretty text))
+        Write     value      -> "write" ++ P.parens (renderValue value)
+
+    renderTransfer = \case
+        Jump         target  -> "jump "   ++ renderTarget target
+        Branch value targets -> "branch " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
+
+    renderTarget target = renderBlockID (ident (targetBlock target)) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+
+    renderExpr = \case
+        Value              value            -> renderValue value
+        UnaryOperator      op value         -> renderUnaryOp op ++ renderValue value
+        ArithmeticOperator value1 op value2 -> renderValue value1 ++ " " ++ renderArithOp op ++ " " ++ renderValue value2
+        ComparisonOperator value1 op value2 -> renderValue value1 ++ " " ++ renderCmpOp   op ++ " " ++ renderValue value2
+        Ask                text             -> "ask" ++ P.parens (P.dquotes (P.pretty text))
+
+    renderValue = \case
+        Named   name   -> renderLetID (ident name)
+        Literal number -> P.pretty number
+
+    renderLetID :: ID Expression -> Doc a
+    renderLetID = \case
+        ASTName astName -> "$" ++ P.pretty (AST.givenName astName)
+        ID      number  -> "$" ++ P.pretty number
+
+    renderBlockID :: ID Block -> Doc a
+    renderBlockID = \case
+        ID     number -> "%" ++ P.pretty number
+        Return        -> "%return"
+
+    renderArguments args = P.parens (P.hsep (P.punctuate "," (map renderTypedName args)))
+
+    renderTypedName name = renderLetID (ident name) ++ ": " ++ renderType (nameType name)
+
+    renderType :: Type Expression -> Doc a
+    renderType = P.pretty . show
+
+    -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
+    renderUnaryOp = \case
+        Not    -> "!"
+        Negate -> "-"
+    renderArithOp = \case
+        Add -> "+"
+        Sub -> "-"
+        Mul -> "*"
+        Div -> "/"
+        Mod -> "%"
+    renderCmpOp = \case
+        Equal        -> "=="
+        NotEqual     -> "!="
+        Less         -> "<"
+        LessEqual    -> "<="
+        Greater      -> ">"
+        GreaterEqual -> ">="
