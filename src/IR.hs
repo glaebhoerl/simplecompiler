@@ -93,6 +93,24 @@ instance TypeOf Expression where
 instance TypeOf Block where
     typeOf = Parameters . map nameType . arguments
 
+-- TODO
+-- We could add some kind of formatting (via the annotation).
+-- Degrees of freedom:
+--  * foreground color
+--  * background color (very sparingly if at all...)
+--  * in ANSI terminals also: vivid vs. dull
+--  * style (bold, italic, underlined)
+-- Things we could distinguish:
+--  * different classes (keyword, literal, term vs. type vs. block identifier, ...)
+--  * definitions vs. uses
+--  * different types
+--  * different identifiers ("semantic highlighting")
+-- One idea:
+--  * Definitions are underlined (uses are not).
+--  * Keywords (and syntax?) are bold and black.
+--  * Block identifiers are italicized (term identifiers are not).
+--  * Colors are used to differentiate either different types or different identifiers.
+--  * What about type names? Use dull colors, other things vivid?
 render :: Block -> Doc a
 render = renderStatement . BlockDecl (Name (ID 0) (Parameters [])) where
     renderStatement = \case
@@ -106,7 +124,7 @@ render = renderStatement . BlockDecl (Name (ID 0) (Parameters [])) where
 
     renderTransfer = \case
         Jump         target  -> "jump "   ++ renderTarget target
-        Branch value targets -> "branch " ++ renderValue value ++ " " ++ P.brackets (P.hsep (P.punctuate "," (map renderTarget targets)))
+        Branch value targets -> "branch " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
 
     renderTarget target = renderBlockID (ident (targetBlock target)) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
 
@@ -123,13 +141,13 @@ render = renderStatement . BlockDecl (Name (ID 0) (Parameters [])) where
 
     renderLetID :: ID Expression -> Doc a
     renderLetID = \case
-        ASTName astName -> "%" ++ P.pretty (AST.givenName astName)
-        ID      number  -> "%" ++ P.pretty number
+        ASTName astName -> "$" ++ P.pretty (AST.givenName astName)
+        ID      number  -> "$" ++ P.pretty number
 
     renderBlockID :: ID Block -> Doc a
     renderBlockID = \case
-        ID     number -> "@" ++ P.pretty number
-        Return        -> "@return"
+        ID     number -> "%" ++ P.pretty number
+        Return        -> "%return"
 
     renderArguments args = P.parens (P.hsep (P.punctuate "," (map renderTypedName args)))
 
