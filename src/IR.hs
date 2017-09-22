@@ -1,6 +1,8 @@
-module IR (Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), returnToCaller, translate, typeOf) where
+module IR (Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), returnToCaller, typeOf, translate, render) where
 
 import MyPrelude hiding (BinaryOperator (..))
+
+import qualified Data.Text.Prettyprint.Doc as P
 
 import qualified MyPrelude as AST (BinaryOperator (..))
 import qualified AST       as AST
@@ -91,6 +93,53 @@ instance TypeOf Expression where
 instance TypeOf Block where
     typeOf = Parameters . map nameType . arguments
 
+render :: Block -> Doc a
+render = renderStatement . BlockDecl (Name (ID 0) (Parameters [])) where
+    renderStatement = \case
+        BlockDecl name block -> "block " ++ renderIdent (ident name) ++ renderArguments (arguments block) ++ " " ++ renderBody (body block) (transfer block)
+        Let       name expr  -> "let "   ++ renderTypedName name     ++ " = " ++ renderExpr expr
+        Assign    name value -> renderIdent (ident name) ++ " = " ++ renderValue value
+        Say       text       -> "say"   ++ P.parens (P.dquotes (P.pretty text))
+        Write     value      -> "write" ++ P.parens (renderValue value)
+    renderBody statements transfer = P.braces (P.nest 4 (mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))) ++ P.hardline)
+    renderTransfer = \case
+        Jump         target  -> "jump "   ++ renderTarget target
+        Branch value targets -> "branch " ++ renderValue value ++ " " ++ P.brackets (P.hsep (P.punctuate "," (map renderTarget targets)))
+    renderTarget target = renderIdent (ident (targetBlock target)) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+    renderExpr = \case
+        Value              value            -> renderValue value
+        UnaryOperator      op value         -> renderUnaryOp op ++ renderValue value
+        ArithmeticOperator value1 op value2 -> renderValue value1 ++ " " ++ renderArithOp op ++ " " ++ renderValue value2
+        ComparisonOperator value1 op value2 -> renderValue value1 ++ " " ++ renderCmpOp   op ++ " " ++ renderValue value2
+        Ask                text             -> "ask" ++ P.parens (P.dquotes (P.pretty text))
+    renderValue = \case
+        Named   name   -> renderIdent (ident name)
+        Literal number -> P.pretty number
+    renderIdent = \case
+        ASTName astName -> "%" ++ P.pretty (AST.givenName astName)
+        ID      number  -> "%" ++ P.pretty number
+        Return          -> "%return"
+    renderArguments args = P.parens (P.hsep (P.punctuate "," (map renderTypedName args)))
+    renderTypedName name = renderIdent (ident name) ++ ": " ++ renderType (nameType name)
+    renderType :: Type Expression -> Doc a
+    renderType = P.pretty . show
+    -- FIXME: Deduplicate these with `module Token` maybe??
+    renderUnaryOp = \case
+        Not    -> "!"
+        Negate -> "-"
+    renderArithOp = \case
+        Add -> "+"
+        Sub -> "-"
+        Mul -> "*"
+        Div -> "/"
+        Mod -> "%"
+    renderCmpOp = \case
+        Equal        -> "=="
+        NotEqual     -> "!="
+        Less         -> "<"
+        LessEqual    -> "<="
+        Greater      -> ">"
+        GreaterEqual -> ">="
 
 class Monad m => TranslateM m where
     translateName       :: AST.TypedName -> m (Name Expression)

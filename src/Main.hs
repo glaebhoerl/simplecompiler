@@ -24,9 +24,10 @@ thenTry getPrev process = do
 
 main :: IO ()
 main = do
-    void $ fmap Just getContents `thenTry`
+    ir  <- fmap Just getContents `thenTry`
            Token.tokenize        `thenTry`
            AST.parse             `thenTry`
            Name.resolveNames     `thenTry`
            Type.checkTypes       `thenTry`
            (Right @() . IR.translate)
+    mapM_ (putStrLn . showText . IR.render) ir

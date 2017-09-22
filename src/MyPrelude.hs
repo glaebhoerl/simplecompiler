@@ -22,6 +22,7 @@ import Control.Monad.Except             as Reexports        (ExceptT, Except, Mo
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
 import Control.Monad.Tardis             as Reexports        (TardisT, Tardis, MonadTardis)
 import Data.Text                        as Reexports        (Text)
+import Data.Text.Prettyprint.Doc        as Reexports        (Doc)
 import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
 import GHC.Generics                     as Reexports        (Generic)

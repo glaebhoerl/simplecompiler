@@ -448,3 +448,9 @@ otoh what's the point of translating the source program to globally unique names
 
 
 -}
+
+TODO
+  redundant ASTName lets
+  different sigil for blocks vs lets? (%, $, @, #, ...?)
+  blocks even, lets odd?
+  use normal logical ops when RHS is a value
