@@ -112,15 +112,15 @@ instance TypeOf Block where
 --  * Colors are used to differentiate either different types or different identifiers.
 --  * What about type names? Use dull colors, other things vivid?
 render :: Block -> Doc a
-render = renderStatement . BlockDecl (Name (ID 0) (Parameters [])) where
+render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
+    renderBody statements transfer = mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
+
     renderStatement = \case
-        BlockDecl name block -> "block " ++ renderBlockID (ident name) ++ renderArguments (arguments block) ++ " " ++ renderBody (body block) (transfer block)
+        BlockDecl name block -> "block " ++ renderBlockID (ident name) ++ renderArguments (arguments block) ++ " " ++ P.braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
         Let       name expr  -> "let "   ++ renderTypedName name     ++ " = " ++ renderExpr expr
         Assign    name value -> renderLetID (ident name) ++ " = " ++ renderValue value
         Say       text       -> "say"   ++ P.parens (P.dquotes (P.pretty text))
         Write     value      -> "write" ++ P.parens (renderValue value)
-
-    renderBody statements transfer = P.braces (P.nest 4 (mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))) ++ P.hardline)
 
     renderTransfer = \case
         Jump         target  -> "jump "   ++ renderTarget target
@@ -156,7 +156,7 @@ render = renderStatement . BlockDecl (Name (ID 0) (Parameters [])) where
     renderType :: Type Expression -> Doc a
     renderType = P.pretty . show
 
-    -- FIXME: Deduplicate these with `module Token` maybe??
+    -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
     renderUnaryOp = \case
         Not    -> "!"
         Negate -> "-"
