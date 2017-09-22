@@ -96,33 +96,48 @@ instance TypeOf Block where
 render :: Block -> Doc a
 render = renderStatement . BlockDecl (Name (ID 0) (Parameters [])) where
     renderStatement = \case
-        BlockDecl name block -> "block " ++ renderIdent (ident name) ++ renderArguments (arguments block) ++ " " ++ renderBody (body block) (transfer block)
+        BlockDecl name block -> "block " ++ renderBlockID (ident name) ++ renderArguments (arguments block) ++ " " ++ renderBody (body block) (transfer block)
         Let       name expr  -> "let "   ++ renderTypedName name     ++ " = " ++ renderExpr expr
-        Assign    name value -> renderIdent (ident name) ++ " = " ++ renderValue value
+        Assign    name value -> renderLetID (ident name) ++ " = " ++ renderValue value
         Say       text       -> "say"   ++ P.parens (P.dquotes (P.pretty text))
         Write     value      -> "write" ++ P.parens (renderValue value)
+
     renderBody statements transfer = P.braces (P.nest 4 (mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))) ++ P.hardline)
+
     renderTransfer = \case
         Jump         target  -> "jump "   ++ renderTarget target
         Branch value targets -> "branch " ++ renderValue value ++ " " ++ P.brackets (P.hsep (P.punctuate "," (map renderTarget targets)))
-    renderTarget target = renderIdent (ident (targetBlock target)) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+
+    renderTarget target = renderBlockID (ident (targetBlock target)) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+
     renderExpr = \case
         Value              value            -> renderValue value
         UnaryOperator      op value         -> renderUnaryOp op ++ renderValue value
         ArithmeticOperator value1 op value2 -> renderValue value1 ++ " " ++ renderArithOp op ++ " " ++ renderValue value2
         ComparisonOperator value1 op value2 -> renderValue value1 ++ " " ++ renderCmpOp   op ++ " " ++ renderValue value2
         Ask                text             -> "ask" ++ P.parens (P.dquotes (P.pretty text))
+
     renderValue = \case
-        Named   name   -> renderIdent (ident name)
+        Named   name   -> renderLetID (ident name)
         Literal number -> P.pretty number
-    renderIdent = \case
+
+    renderLetID :: ID Expression -> Doc a
+    renderLetID = \case
         ASTName astName -> "%" ++ P.pretty (AST.givenName astName)
         ID      number  -> "%" ++ P.pretty number
-        Return          -> "%return"
+
+    renderBlockID :: ID Block -> Doc a
+    renderBlockID = \case
+        ID     number -> "@" ++ P.pretty number
+        Return        -> "@return"
+
     renderArguments args = P.parens (P.hsep (P.punctuate "," (map renderTypedName args)))
-    renderTypedName name = renderIdent (ident name) ++ ": " ++ renderType (nameType name)
+
+    renderTypedName name = renderLetID (ident name) ++ ": " ++ renderType (nameType name)
+
     renderType :: Type Expression -> Doc a
     renderType = P.pretty . show
+
     -- FIXME: Deduplicate these with `module Token` maybe??
     renderUnaryOp = \case
         Not    -> "!"
