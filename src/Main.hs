@@ -26,19 +26,22 @@ thenTry getPrev process = do
 
 main :: IO ()
 main = do
-    ir  <- fmap Just getContents `thenTry`
-           Token.tokenize        `thenTry`
-           AST.parse             `thenTry`
-           Name.resolveNames     `thenTry`
-           Type.checkTypes       `thenTry`
-           (Right @() . IR.translate)
-    mapM_ (P.putDoc . fmap (ansiStyle . IR.defaultStyle) . IR.render) ir
+    result <- fmap Just getContents `thenTry`
+              Token.tokenize        `thenTry`
+              AST.parse             `thenTry`
+              Name.resolveNames     `thenTry`
+              Type.checkTypes
+    forM_ result $ \typedAST -> do
+        assertM (Name.validate typedAST)
+        assertM (Type.validate typedAST)
+        let ir = IR.translate typedAST
+        (P.putDoc . fmap (ansiStyle . IR.defaultStyle) . IR.render) ir
 
 ansiStyle :: IR.Style -> P.AnsiStyle
 ansiStyle IR.Style { IR.color, IR.isDull, IR.isBold, IR.isItalic, IR.isUnderlined } = style where
     style     = maybe mempty (fromColor . mapColor) color ++ fontStyle
     fontStyle = mconcat (catMaybes [justIf isBold P.bold, justIf isItalic P.italicized, justIf isUnderlined P.underlined])
-    fromColor = if not isDull then P.colorDull else P.color -- FIXME the `not` is required because otherwise it's backwards, but where's the bug?
+    fromColor = if isDull then P.colorDull else P.color -- FIXME the `not` is required because otherwise it's backwards, but where's the bug?
     mapColor  = \case
         IR.Black   -> P.Black
         IR.White   -> P.White

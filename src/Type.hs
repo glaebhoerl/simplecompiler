@@ -144,7 +144,7 @@ data ValidationError = ValidationError {
     expression   :: AST.Expression TypedName,
     expectedType :: Type,
     actualType   :: Type
-} deriving (Generic, Eq)
+} deriving (Generic, Show)
 
 -- This checks that:
 --  * The AST is locally well-typed at each point, based on the types stored within `Name`s.
