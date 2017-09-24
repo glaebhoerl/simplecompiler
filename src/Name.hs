@@ -1,4 +1,4 @@
-module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..), resolveNames) where
+module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..), resolveNames, ValidationError (..), validate) where
 
 import MyPrelude
 
@@ -135,8 +135,71 @@ instance ResolveNamesIn AST.Statement where
 instance ResolveNamesIn AST.Expression where
     resolveNamesIn = mapM lookupName
 
-isWellFormed :: AST ResolvedName -> Bool
-isWellFormed = todo
+data ValidationError info
+    = NotInScope   !Name
+    | Redefined    !Name
+    | InfoMismatch !(NameWith info) !(NameWith info)
+    deriving (Generic, Show)
 
-lookupPath :: Path -> AST name -> Maybe (AST name)
-lookupPath = todo
+-- This checks that:
+--  * Each name is in scope where it is used.
+--  * A name is not defined more than once by the same scope.
+--  * The info stored alongside the name is the same at each of its occurrences.
+-- This does NOT check that:
+--  * The `path` component of the name is correct. This is regarded as an implemntation detail, subject to change.
+--  * The binding types are stored correctly. This is an unfortunate limitation of being polymorphic over the `info` type.
+validate :: Eq info => AST (NameWith info) -> Either (ValidationError info) ()
+validate = runExcept . evalStateT [] . validateBlock where
+    validateBlock block = do
+        modifyState (prepend Map.empty)
+        mapM_ validateStatement (AST.body block)
+        modifyState (assert . tail)
+    validateStatement = \case
+        AST.Binding _ (NameWith name info) expr -> do
+            validateExpression expr
+            doModifyState $ \context -> do
+                let scope = assert (head context)
+                when (Map.member name scope) $ do
+                    throwError (Redefined name)
+                return (prepend (Map.insert name info scope) (assert (tail context)))
+        AST.Assign n expr -> do
+            validateExpression expr
+            validateName n
+        AST.IfThen expr body -> do
+            validateExpression expr
+            validateBlock body
+        AST.IfThenElse expr body1 body2 -> do
+            validateExpression expr
+            mapM_ validateBlock [body1, body2]
+        AST.Forever body -> do
+            validateBlock body
+        AST.While expr body -> do
+            validateExpression expr
+            validateBlock body
+        AST.Return maybeExpr -> do
+            mapM_ validateExpression maybeExpr
+        AST.Break -> do
+            return ()
+        AST.Say _ -> do
+            return ()
+        AST.Write expr -> do
+            validateExpression expr
+    validateExpression = \case
+        AST.Named n -> do
+            validateName n
+        AST.UnaryOperator _ expr -> do
+            validateExpression expr
+        AST.BinaryOperator expr1 _ expr2 -> do
+            mapM_ validateExpression [expr1, expr2]
+        AST.Literal _ -> do
+            return ()
+        AST.Ask _ -> do
+            return ()
+    validateName (NameWith name info1) = do
+        context <- getState
+        case Map.lookup name (Map.unions context) of
+            Nothing -> do
+                throwError (NotInScope name)
+            Just info2 -> do
+                when (info1 != info2) $ do
+                    throwError (InfoMismatch (NameWith name info1) (NameWith name info2))
