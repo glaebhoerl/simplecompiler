@@ -1,4 +1,4 @@
-module Type (Type (..), TypedName, Error (..), checkTypes, typeOf) where
+module Type (Type (..), TypedName, Error (..), checkTypes, typeOf, ValidationError (..), validate) where
 
 import MyPrelude
 
@@ -139,3 +139,64 @@ typeOf = \case
             LogicalOperator    _ -> Bool
     AST.Ask _ ->
         Int
+
+data ValidationError = ValidationError {
+    expression   :: AST.Expression TypedName,
+    expectedType :: Type,
+    actualType   :: Type
+} deriving (Generic, Eq)
+
+-- This checks that:
+--  * The AST is locally well-typed at each point, based on the types stored within `Name`s.
+-- This does NOT check that:
+--  * Names are actually in scope, and the info stored in `Name`s is consistent. Use `Name.validate` for that!
+--  * Literals are within range, and assignments match their binding types.
+validate :: AST TypedName -> Either ValidationError ()
+validate = runExcept . validateBlock where
+    validateBlock = mapM_ validateStatement . AST.body
+    validateStatement = \case
+        AST.Binding _ (NameWith _ ty) expr -> do
+            check ty expr
+        AST.Assign (NameWith _ ty) expr -> do
+            check ty expr
+        AST.IfThen expr body -> do
+            check Bool expr
+            validateBlock body
+        AST.IfThenElse expr body1 body2 -> do
+            check Bool expr
+            mapM_ validateBlock [body1, body2]
+        AST.Forever body -> do
+            validateBlock body
+        AST.While expr body -> do
+            check Bool expr
+            validateBlock body
+        AST.Return maybeExpr -> do
+            mapM_ (check Int) maybeExpr
+        AST.Break -> do
+            return ()
+        AST.Say _ -> do
+            return ()
+        AST.Write expr -> do
+            check Int expr
+    validateExpression = \case
+        AST.UnaryOperator op expr -> do
+            check opExpectsType expr where
+                opExpectsType = case op of
+                    Not    -> Bool
+                    Negate -> Int
+        AST.BinaryOperator expr1 op expr2 -> do
+            mapM_ (check opExpectsType) [expr1, expr2] where
+                opExpectsType = case op of
+                    ArithmeticOperator _ -> Int
+                    ComparisonOperator _ -> Int
+                    LogicalOperator    _ -> Bool
+        AST.Named _ -> do
+            return ()
+        AST.Literal _ -> do
+            return ()
+        AST.Ask _ -> do
+            return ()
+    check expectedType expr = do
+        when (typeOf expr != expectedType) $ do
+            throwError (ValidationError expr expectedType (typeOf expr))
+        validateExpression expr
