@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-} -- for `idIsEven`
+
 module IR (
     Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), returnToCaller, typeOf, translate,
     Info (..), LiteralType (..), IdentInfo (..), IdentName (..), render, Style (..), Color (..), defaultStyle
@@ -106,41 +108,53 @@ instance TypeOf Block where
 ---------------------------------------------------------------------------------------------------- TRANSLATION FRONTEND
 
 class Monad m => TranslateM m where
-    translateName       :: AST.TypedName -> m (Name Expression)
-    emitStatement       :: Statement     -> m ()
-    emitLet             :: Expression    -> m (Name Expression)
-    emitBlock           :: Type Block    -> m Transfer -> m (Name Block)
-    emitTransfer        :: Transfer      -> m ()
+    translateName       :: AST.TypedName       -> m (Name Expression)
+    emitStatement       :: Statement           -> m ()
+    emitLet             :: Maybe AST.TypedName -> Expression -> m (Name Expression)
+    emitBlock           :: Type Block          -> m Transfer -> m (Name Block)
+    emitTransfer        :: Transfer            -> m ()
     currentBlock        :: m (Name Block)
     currentArguments    :: m [Name Expression]
     currentContinuation :: Type Block -> m (Name Block)
 
-translateExpression :: TranslateM m => AST.Expression AST.TypedName -> m Value
-translateExpression = \case
+translateTemporary :: TranslateM m => AST.Expression AST.TypedName -> m Value
+translateTemporary = translateExpression Nothing
+
+translateBinding :: TranslateM m => AST.TypedName -> AST.Expression AST.TypedName -> m Value
+translateBinding = translateExpression . Just
+
+translateExpression :: TranslateM m => Maybe AST.TypedName -> AST.Expression AST.TypedName -> m Value
+translateExpression providedName = let emitNamedLet = emitLet providedName in \case
     AST.Named name -> do
         translatedName <- translateName name
         return (Named translatedName)
     AST.Literal num -> do
-        return (Literal (fromIntegral num))
+        let value = Literal (fromIntegral num)
+        if isJust providedName
+            then do
+                name <- emitNamedLet (Value value)
+                return (Named name)
+            else do
+                return value
     AST.UnaryOperator op expr -> do
-        value <- translateExpression expr
-        name  <- emitLet (UnaryOperator op value)
+        value <- translateTemporary expr
+        name  <- emitNamedLet (UnaryOperator op value)
         return (Named name)
     AST.BinaryOperator expr1 (AST.ArithmeticOperator op) expr2 -> do
-        value1 <- translateExpression expr1
-        value2 <- translateExpression expr2
-        name   <- emitLet (ArithmeticOperator value1 op value2)
+        value1 <- translateTemporary expr1
+        value2 <- translateTemporary expr2
+        name   <- emitNamedLet (ArithmeticOperator value1 op value2)
         return (Named name)
     AST.BinaryOperator expr1 (AST.ComparisonOperator op) expr2 -> do -- TODO deduplicate these two maybe
-        value1 <- translateExpression expr1
-        value2 <- translateExpression expr2
-        name   <- emitLet (ComparisonOperator value1 op value2)
+        value1 <- translateTemporary expr1
+        value2 <- translateTemporary expr2
+        name   <- emitNamedLet  (ComparisonOperator value1 op value2)
         return (Named name)
     AST.BinaryOperator expr1 (AST.LogicalOperator op) expr2 -> do
-        value1 <- translateExpression expr1
-        joinPoint <- currentContinuation (Parameters [Bool])
+        value1 <- translateTemporary expr1
+        joinPoint <- currentContinuation (Parameters [Bool]) -- TODO use the provided name!
         rhsBlock <- emitBlock (Parameters []) $ do
-            value2 <- translateExpression expr2
+            value2 <- translateTemporary expr2
             return (Jump (Target joinPoint [value2]))
         let branches = case op of
                 And -> [Target joinPoint [value1], Target rhsBlock  []]
@@ -149,28 +163,27 @@ translateExpression = \case
         args <- currentArguments
         return (Named (assert (head args)))
     AST.Ask text -> do
-        name <- emitLet (Ask text)
+        name <- emitNamedLet (Ask text)
         return (Named name)
 
 translateStatement :: TranslateM m => AST.Statement AST.TypedName -> m ()
 translateStatement = \case
     AST.Binding _ name expr -> do
-        translatedName <- translateName name
-        value <- translateExpression expr
-        emitStatement (Let translatedName (Value value)) -- (this is slightly redundant, but it should get optimized away)
+        _ <- translateBinding name expr
+        return ()
     AST.Assign name expr -> do
         translatedName <- translateName name
-        value <- translateExpression expr
+        value <- translateTemporary expr
         emitStatement (Assign translatedName value)
     AST.IfThen expr block -> do
-        value <- translateExpression expr
+        value <- translateTemporary expr
         joinPoint <- currentContinuation (Parameters [])
         thenBlock <- emitBlock (Parameters []) $ do
             translateBlock block
             return (Jump (Target joinPoint []))
         emitTransfer (Branch value [Target joinPoint [], Target thenBlock []])
     AST.IfThenElse expr block1 block2 -> do
-        value <- translateExpression expr
+        value <- translateTemporary expr
         joinPoint <- currentContinuation (Parameters [])
         thenBlock <- emitBlock (Parameters []) $ do
             translateBlock block1
@@ -192,18 +205,18 @@ translateStatement = \case
             blockBody <- emitBlock (Parameters []) $ do
                 translateBlock block
                 return (Jump (Target conditionTest []))
-            value <- translateExpression expr
+            value <- translateTemporary expr
             return (Branch value [Target joinPoint [], Target blockBody []])
         emitTransfer (Jump (Target whileBlock []))
     AST.Return maybeExpr -> do
-        maybeValue <- mapM translateExpression maybeExpr
+        maybeValue <- mapM translateTemporary maybeExpr
         emitTransfer (Jump (Target returnToCaller [fromMaybe (Literal 0) maybeValue]))
     AST.Break -> do
         todo -- TODO
     AST.Say text -> do
         emitStatement (Say text)
     AST.Write expr -> do
-        value <- translateExpression expr
+        value <- translateTemporary expr
         emitStatement (Write value)
 
 translateBlock :: TranslateM m => AST.Block AST.TypedName -> m ()
@@ -249,25 +262,32 @@ data BackwardsState = BackwardsState {
     enclosingContinuations :: !(Maybe BackwardsState)
 } deriving Generic
 
-data EvenOdd = Even | Odd deriving Enum
+class NewID node where
+    idIsEven :: Bool
 
-newID :: EvenOdd -> Translate (ID node)
-newID evenOdd = do
+instance NewID Block where
+    idIsEven = False
+
+instance NewID Expression where
+    idIsEven = True
+
+newID :: forall node. NewID node => Translate (ID node)
+newID = do
     -- NOTE incrementing first is significant, ID 0 is the root block!
     modifyM (field @"lastID") $ \lastID ->
-        lastID + (if fromEnum evenOdd == lastID % 2 then 2 else 1)
+        lastID + (if idIsEven @node == (lastID % 2 == 0) then 2 else 1)
     new <- getM (field @"lastID")
     return (ID new)
 
 newArgumentIDs :: Type Block -> Translate [Name Expression]
 newArgumentIDs (Parameters argTypes) = do
     forM argTypes $ \argType -> do
-        argID <- newID Odd
+        argID <- newID
         return (Name argID argType)
 
 pushBlock :: Type Block -> Translate ()
 pushBlock params = do
-    blockID <- newID Even
+    blockID <- newID
     args    <- newArgumentIDs params
     modifyM         (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID args [] Nothing (Just previouslyInnermost))
     backModifyState (assert . enclosingContinuations)
@@ -290,10 +310,16 @@ instance TranslateM Translate where
     emitStatement statement = do
         modifyM (field @"innermostBlock" . field @"statements") (++ [statement])
 
-    emitLet :: Expression -> Translate (Name Expression)
-    emitLet expr = do
-        letID <- newID Odd
-        let name = Name letID (typeOf expr)
+    emitLet :: Maybe AST.TypedName -> Expression -> Translate (Name Expression)
+    emitLet providedName expr = do
+        name <- case providedName of
+            Just astName -> do
+                translatedName <- translateName astName
+                assertM (nameType translatedName == typeOf expr)
+                return translatedName
+            Nothing -> do
+                letID <- newID
+                return (Name letID (typeOf expr))
         emitStatement (Let name expr)
         return name
 
@@ -315,7 +341,7 @@ instance TranslateM Translate where
         let nextBlockParams = case emittedContinuation of
                 Just blockName -> nameType blockName
                 Nothing        -> Parameters [] -- TODO this means we're in dead code; should we do anything about it??
-        nextBlockID   <- newID Even -- FIXME we should skip allocating a block if we're at the end of a parent block!
+        nextBlockID   <- newID -- FIXME we should skip allocating a block if we're at the end of a parent block!
         nextBlockArgs <- newArgumentIDs nextBlockParams
         setM (field @"innermostBlock") (BlockState nextBlockID nextBlockArgs [] Nothing enclosingBlock)
         backModifyState $ \BackwardsState { nextBlock = _, thisBlock = prevThisBlock, enclosingContinuations } ->
@@ -410,6 +436,7 @@ data IdentInfo = IdentInfo {
     identName    :: !IdentName
 } deriving (Generic, Eq, Show)
 
+-- TODO maybe we should replace everything with plain `Text`s, so we can share definitions w/ an AST pretty printer?
 data IdentName
     = LetName    !(Name Expression)
     | BlockName  !(Name Block)
@@ -468,10 +495,11 @@ render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
             TypeName   t -> ("",  P.pretty (show t))
             GlobalName n -> ("",  P.pretty n)
 
+    renderIdent :: ID node -> Doc Info
     renderIdent = \case
         ASTName n -> P.pretty (AST.givenName n)
         ID      i -> P.pretty i
-        Return    -> "return"
+        Return    -> keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
 
     argumentList args = parens (P.hsep (P.punctuate "," (map typedName args)))
 
@@ -520,19 +548,18 @@ defaultStyle = \case
     Brace            -> plain { isBold = True }
     Paren            -> plain
     DefineEquals     -> plain { isBold = True }
-    AssignEquals     -> plain
+    AssignEquals     -> plain { color  = Just Magenta }
     Colon            -> plain { isBold = True }
-    UserOperator     -> plain
-    Literal'   type' -> plain { isDull = True, color = literalColor type' }
+    UserOperator     -> plain { color  = Just Magenta }
+    Literal'   _     -> plain { color = Just Yellow }
     Sigil      info  -> plain { isUnderlined = isDefinition info }
+                                --color = nameColor (identName info) }
     Identifier info  -> plain { isUnderlined = isDefinition info,
-                                --isItalic     = isJust (getWhen (constructor @"BlockName") (identName info)),
-                                --isDull       = isJust (getWhen (constructor @"TypeName")  (identName info)),
-                                color        = Nothing } -- TODO, based on type or ID!
+                                color        = nameColor (identName info) } -- TODO, based on type or ID!
     where
         plain = Style Nothing False False False False
-        literalColor = \case
-            StringLiteral -> Just Red
-            NumberLiteral -> Just Blue
-            BoolLiteral   -> Just Cyan
-
+        nameColor = \case
+            LetName    _ -> Just Green
+            BlockName  _ -> Just Red
+            TypeName   _ -> Just Cyan
+            GlobalName _ -> Nothing
