@@ -27,8 +27,9 @@ deriving instance Eq   (Type node)
 deriving instance Show (Type node)
 
 data ID node where
-    ID      :: !Int      -> ID node
+    LetID   :: !Int      -> ID Expression
     ASTName :: !AST.Name -> ID Expression
+    BlockID :: !Int      -> ID Block
     Return  ::              ID Block
 
 deriving instance Eq   (ID node)
@@ -115,7 +116,7 @@ class Monad m => TranslateM m where
     emitTransfer        :: Transfer            -> m ()
     currentBlock        :: m (Name Block)
     currentArguments    :: m [Name Expression]
-    currentContinuation :: Type Block -> m (Name Block)
+    currentContinuation :: Type Block -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
 
 translateTemporary :: TranslateM m => AST.Expression AST.TypedName -> m Value
 translateTemporary = translateExpression Nothing
@@ -231,7 +232,7 @@ translate :: AST.Block AST.TypedName -> Block
 translate = evalTardis (backwardsState, forwardsState) . runTranslate . translateRootBlock
     where
         backwardsState = BackwardsState Nothing Nothing Nothing
-        forwardsState  = ForwardsState  { lastID = 0, innermostBlock = BlockState (ID 0) [] [] Nothing Nothing }
+        forwardsState  = ForwardsState  { lastID = 0, innermostBlock = BlockState (BlockID 0) [] [] Nothing Nothing }
         translateRootBlock rootBlock = do
             (blockID, finishedBlock) <- liftM assert (backGetM (field @"thisBlock"))
             translateBlock rootBlock
@@ -264,12 +265,15 @@ data BackwardsState = BackwardsState {
 
 class NewID node where
     idIsEven :: Bool
-
-instance NewID Block where
-    idIsEven = False
+    makeID :: Int -> ID node
 
 instance NewID Expression where
     idIsEven = True
+    makeID = LetID
+
+instance NewID Block where
+    idIsEven = False
+    makeID = BlockID
 
 newID :: forall node. NewID node => Translate (ID node)
 newID = do
@@ -277,7 +281,7 @@ newID = do
     modifyM (field @"lastID") $ \lastID ->
         lastID + (if idIsEven @node == (lastID % 2 == 0) then 2 else 1)
     new <- getM (field @"lastID")
-    return (ID new)
+    return (makeID new)
 
 newArgumentIDs :: Type Block -> Translate [Name Expression]
 newArgumentIDs (Parameters argTypes) = do
@@ -498,7 +502,8 @@ render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
     renderIdent :: ID node -> Doc Info
     renderIdent = \case
         ASTName n -> P.pretty (AST.givenName n)
-        ID      i -> P.pretty i
+        LetID   i -> P.pretty i
+        BlockID i -> P.pretty i
         Return    -> keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
 
     argumentList args = parens (P.hsep (P.punctuate "," (map typedName args)))
