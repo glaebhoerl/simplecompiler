@@ -425,7 +425,7 @@ data ValidationError where
     NotInScope     :: !(ID node)                         -> ValidationError
     Redefined      :: !(ID node)                         -> ValidationError
     Inconsistent   :: !(Name node) -> !(Name node)       -> ValidationError
-    TypeMismatch   :: Show node => !(Type node) -> !node -> ValidationError
+    TypeMismatch   :: Show node => !(Type node) -> !node -> ValidationError -- Technically we don't need the `Show` here, but `deriving` doesn't know that.
     BadTargetCount :: ![Target]                          -> ValidationError
     BadArgsCount   :: !Target                            -> ValidationError
 
@@ -670,18 +670,18 @@ defaultStyle = \case
     Brace            -> plain { isBold = True }
     Paren            -> plain
     DefineEquals     -> plain { isBold = True }
-    AssignEquals     -> plain { color  = Just Magenta }
+    AssignEquals     -> plain { color  = Just Yellow }
     Colon            -> plain { isBold = True }
-    UserOperator     -> plain { color  = Just Magenta }
-    Literal'   _     -> plain { color = Just Yellow }
+    UserOperator     -> plain { color  = Just Yellow }
+    Literal'   _     -> plain { color  = Just Red }
     Sigil      info  -> plain { isUnderlined = isDefinition info }
                                 --color = nameColor (identName info) }
     Identifier info  -> plain { isUnderlined = isDefinition info,
-                                color        = nameColor (identName info) } -- TODO, based on type or ID!
+                                color        = nameColor (identName info) }
     where
         plain = Style Nothing False False False False
         nameColor = \case
-            LetName    _ -> Just Green
-            BlockName  _ -> Just Red
+            LetName    _ -> Just Magenta
+            BlockName  _ -> Just Green
             TypeName   _ -> Just Cyan
-            GlobalName _ -> Nothing
+            GlobalName _ -> Just Yellow
