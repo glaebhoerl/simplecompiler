@@ -43,8 +43,9 @@ deriving instance Ord  (ID node)
 deriving instance Show (ID node)
 
 data Name node = Name {
-    ident    :: (ID   node), -- FIXME this needs to be lazy or we get a <<loop>>
-    nameType :: !(Type node)
+    ident       :: (ID   node), -- FIXME this needs to be lazy or we get a <<loop>>
+    nameType    :: !(Type node),
+    description :: !Text
 } deriving (Generic, Show)
 
 instance Eq (Name node) where
@@ -54,7 +55,7 @@ instance Ord (Name node) where
     compare = compare `on` ident
 
 returnToCaller :: Name Block
-returnToCaller = Name Return (Parameters [Int])
+returnToCaller = Name Return (Parameters [Int]) ""
 
 data Value
     = Literal !Int64
@@ -118,11 +119,11 @@ class Monad m => TranslateM m where
     translateName       :: AST.TypedName       -> m (Name Expression)
     emitStatement       :: Statement           -> m ()
     emitLet             :: Maybe AST.TypedName -> Expression -> m (Name Expression)
-    emitBlock           :: Type Block          -> m Transfer -> m (Name Block)
+    emitBlock           :: Text -> Type Block  -> m Transfer -> m (Name Block)
     emitTransfer        :: Transfer            -> m ()
     currentBlock        :: m (Name Block)
     currentArguments    :: m [Name Expression]
-    currentContinuation :: Type Block -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
+    currentContinuation :: Text -> Type Block -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
 
 translateTemporary :: TranslateM m => AST.Expression AST.TypedName -> m Value
 translateTemporary = translateExpression Nothing
@@ -159,8 +160,9 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         return (Named name)
     AST.BinaryOperator expr1 (AST.LogicalOperator op) expr2 -> do
         value1 <- translateTemporary expr1
-        joinPoint <- currentContinuation (Parameters [Bool]) -- TODO use the provided name!
-        rhsBlock <- emitBlock (Parameters []) $ do
+        let opName = toLower (showText op)
+        joinPoint <- currentContinuation ("join_" ++ opName) (Parameters [Bool]) -- TODO use the provided name for the arg!
+        rhsBlock <- emitBlock opName (Parameters []) $ do
             value2 <- translateTemporary expr2
             return (Jump (Target joinPoint [value2]))
         let branches = case op of
@@ -184,32 +186,32 @@ translateStatement = \case
         emitStatement (Assign translatedName value)
     AST.IfThen expr block -> do
         value <- translateTemporary expr
-        joinPoint <- currentContinuation (Parameters [])
-        thenBlock <- emitBlock (Parameters []) $ do
+        joinPoint <- currentContinuation "join_if" (Parameters [])
+        thenBlock <- emitBlock "if" (Parameters []) $ do
             translateBlock block
             return (Jump (Target joinPoint []))
         emitTransfer (Branch value [Target joinPoint [], Target thenBlock []])
     AST.IfThenElse expr block1 block2 -> do
         value <- translateTemporary expr
-        joinPoint <- currentContinuation (Parameters [])
-        thenBlock <- emitBlock (Parameters []) $ do
+        joinPoint <- currentContinuation "join_if_else" (Parameters [])
+        thenBlock <- emitBlock "if" (Parameters []) $ do
             translateBlock block1
             return (Jump (Target joinPoint []))
-        elseBlock <- emitBlock (Parameters []) $ do
+        elseBlock <- emitBlock "else" (Parameters []) $ do
             translateBlock block2
             return (Jump (Target joinPoint []))
         emitTransfer (Branch value [Target elseBlock [], Target thenBlock []])
     AST.Forever block -> do
-        foreverBlock <- emitBlock (Parameters []) $ do
+        foreverBlock <- emitBlock "forever" (Parameters []) $ do
             blockBody <- currentBlock
             translateBlock block
             return (Jump (Target blockBody []))
         emitTransfer (Jump (Target foreverBlock []))
     AST.While expr block -> do
-        joinPoint <- currentContinuation (Parameters [])
-        whileBlock <- emitBlock (Parameters []) $ do
+        joinPoint <- currentContinuation "join_while" (Parameters [])
+        whileBlock <- emitBlock "while" (Parameters []) $ do
             conditionTest <- currentBlock
-            blockBody <- emitBlock (Parameters []) $ do
+            blockBody <- emitBlock "while_body" (Parameters []) $ do
                 translateBlock block
                 return (Jump (Target conditionTest []))
             value <- translateTemporary expr
@@ -238,9 +240,9 @@ translate :: AST.Block AST.TypedName -> Block
 translate = evalTardis (backwardsState, forwardsState) . runTranslate . translateRootBlock
     where
         backwardsState = BackwardsState Nothing Nothing Nothing
-        forwardsState  = ForwardsState  { lastID = 0, innermostBlock = BlockState (BlockID 0) [] [] Nothing Nothing }
+        forwardsState  = ForwardsState  { lastID = 0, innermostBlock = BlockState (BlockID 0) "root" [] [] Nothing Nothing }
         translateRootBlock rootBlock = do
-            (blockID, finishedBlock) <- liftM assert (backGetM (field @"thisBlock"))
+            (blockID, _, finishedBlock) <- liftM assert (backGetM (field @"thisBlock"))
             translateBlock rootBlock
             emitTransfer (Jump (Target returnToCaller [Literal 0]))
             --assertM (blockID == ID 0) -- this results in a <<loop>>
@@ -257,6 +259,7 @@ data ForwardsState = ForwardsState {
 
 data BlockState = BlockState {
     blockID             :: !(ID Block),
+    blockDescription    :: !Text,
     blockArguments      :: ![Name Expression],
     statements          :: ![Statement],
     emittedContinuation :: !(Maybe (Name Block)),
@@ -264,8 +267,8 @@ data BlockState = BlockState {
 } deriving Generic
 
 data BackwardsState = BackwardsState {
-    nextBlock              :: !(Maybe (ID Block, Block)),
-    thisBlock              :: !(Maybe (ID Block, Block)),
+    nextBlock              :: !(Maybe (ID Block, Text, Block)),
+    thisBlock              :: !(Maybe (ID Block, Text, Block)),
     enclosingContinuations :: !(Maybe BackwardsState)
 } deriving Generic
 
@@ -293,13 +296,13 @@ newArgumentIDs :: Type Block -> Translate [Name Expression]
 newArgumentIDs (Parameters argTypes) = do
     forM argTypes $ \argType -> do
         argID <- newID
-        return (Name argID argType)
+        return (Name argID argType "")
 
-pushBlock :: Type Block -> Translate ()
-pushBlock params = do
+pushBlock :: Text -> Type Block -> Translate ()
+pushBlock description params = do
     blockID <- newID
     args    <- newArgumentIDs params
-    modifyM         (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID args [] Nothing (Just previouslyInnermost))
+    modifyM         (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing (Just previouslyInnermost))
     backModifyState (assert . enclosingContinuations)
 
 popBlock :: Translate ()
@@ -311,7 +314,7 @@ popBlock = do
 instance TranslateM Translate where
     translateName :: AST.TypedName -> Translate (Name Expression)
     translateName (AST.NameWith name ty) = do
-        return (Name (ASTName name) (translatedType ty))
+        return (Name (ASTName name) (translatedType ty) (AST.givenName name))
         where translatedType = \case
                 AST.Bool -> Bool
                 AST.Int  -> Int
@@ -329,15 +332,15 @@ instance TranslateM Translate where
                 return translatedName
             Nothing -> do
                 letID <- newID
-                return (Name letID (typeOf expr))
+                return (Name letID (typeOf expr) "")
         emitStatement (Let name expr)
         return name
 
-    emitBlock :: Type Block -> Translate Transfer -> Translate (Name Block)
-    emitBlock argTypes translateBody = do
-        pushBlock argTypes
+    emitBlock :: Text -> Type Block -> Translate Transfer -> Translate (Name Block)
+    emitBlock description argTypes translateBody = do
+        pushBlock description argTypes
         blockName                <- currentBlock
-        ~(blockID, finishedBlock) <- liftM assert (backGetM (field @"thisBlock")) -- FIXME need a lazy match here to avoid a <<loop>>
+        ~(blockID, _, finishedBlock) <- liftM assert (backGetM (field @"thisBlock")) -- FIXME need a lazy match here to avoid a <<loop>>
         transferAtEnd            <- translateBody
         --assertM (blockID == ident blockName) -- this results in a <<loop>>
         emitTransfer transferAtEnd
@@ -347,33 +350,34 @@ instance TranslateM Translate where
 
     emitTransfer :: Transfer -> Translate ()
     emitTransfer transfer = do
-        BlockState { blockID, blockArguments, statements, emittedContinuation, enclosingBlock } <- getM (field @"innermostBlock")
-        let nextBlockParams = case emittedContinuation of
-                Just blockName -> nameType blockName
-                Nothing        -> Parameters [] -- TODO this means we're in dead code; should we do anything about it??
+        BlockState { blockID, blockDescription, blockArguments, statements, emittedContinuation, enclosingBlock } <- getM (field @"innermostBlock")
+        let (nextBlockParams, nextDescription) = case emittedContinuation of
+                Just blockName -> (nameType blockName, description blockName)
+                Nothing        -> (Parameters [],      "") -- TODO this means we're in dead code; should we do anything about it??
         nextBlockID   <- newID -- FIXME we should skip allocating a block if we're at the end of a parent block!
         nextBlockArgs <- newArgumentIDs nextBlockParams
-        setM (field @"innermostBlock") (BlockState nextBlockID nextBlockArgs [] Nothing enclosingBlock)
+        setM (field @"innermostBlock") (BlockState nextBlockID nextDescription nextBlockArgs [] Nothing enclosingBlock)
         backModifyState $ \BackwardsState { nextBlock = _, thisBlock = prevThisBlock, enclosingContinuations } ->
-            BackwardsState { nextBlock = prevThisBlock, thisBlock = Just (blockID, Block blockArguments statements transfer), enclosingContinuations }
+            BackwardsState { nextBlock = prevThisBlock, thisBlock = Just (blockID, blockDescription, Block blockArguments statements transfer), enclosingContinuations }
 
     currentBlock :: Translate (Name Block)
     currentBlock = do
-        blockID   <- getM (field @"innermostBlock" . field @"blockID")
-        arguments <- currentArguments
-        return (Name blockID (Parameters (map nameType arguments)))
+        blockID     <- getM (field @"innermostBlock" . field @"blockID")
+        description <- getM (field @"innermostBlock" . field @"blockDescription")
+        arguments   <- currentArguments
+        return (Name blockID (Parameters (map nameType arguments)) description)
 
     currentArguments :: Translate [Name Expression]
     currentArguments = do
         getM (field @"innermostBlock" . field @"blockArguments")
 
-    currentContinuation :: Type Block -> Translate (Name Block)
-    currentContinuation params = do
+    currentContinuation :: Text -> Type Block -> Translate (Name Block)
+    currentContinuation description params = do
         alreadyEmitted <- getM (field @"innermostBlock" . field @"emittedContinuation")
         case alreadyEmitted of
             Nothing -> do
-                ~(nextBlockID, nextBlock) <- liftM assert (backGetM (field @"nextBlock")) -- FIXME need a lazy match here to avoid a <<loop>>
-                let nextBlockName = Name nextBlockID params
+                ~(nextBlockID, _, nextBlock) <- liftM assert (backGetM (field @"nextBlock")) -- FIXME need a lazy match here to avoid a <<loop>>
+                let nextBlockName = Name nextBlockID params description
                 emitStatement (BlockDecl nextBlockName nextBlock)
                 setM (field @"innermostBlock" . field @"emittedContinuation") (Just nextBlockName)
                 return nextBlockName
@@ -521,14 +525,14 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
             when (memberID ident scope) $ do
                 throwError (Redefined ident)
             return (insertID ident nameType scope)
-    checkID Name { ident, nameType } = do
+    checkID Name { ident, nameType, description } = do
         inContext <- liftM (lookupID ident) getState
         case inContext of
             Nothing -> do
                 throwError (NotInScope ident)
             Just recordedType -> do
                 when (nameType != recordedType) $ do
-                    throwError (Inconsistent (Name ident nameType) (Name ident recordedType))
+                    throwError (Inconsistent (Name ident nameType description) (Name ident recordedType ""))
 
 
 
@@ -616,7 +620,7 @@ render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
     renderName info = note (Sigil info) sigil ++ note (Identifier info) name where
         (sigil, name) = case identName info of
             LetName    n -> ("$", renderIdent (ident n))
-            BlockName  n -> ("%", renderIdent (ident n))
+            BlockName  n -> ("%", renderIdent (ident n) ++ (if description n == "" then "" else "_" ++ P.pretty (description n)))
             TypeName   t -> ("",  P.pretty (show t))
             GlobalName n -> ("",  P.pretty n)
 
