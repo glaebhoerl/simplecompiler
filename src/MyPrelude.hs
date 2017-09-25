@@ -152,6 +152,12 @@ modify lens f outer = set lens (f (get lens outer)) outer
 getWhen :: Prism outer inner -> outer -> Maybe inner
 getWhen prism outer = right (snd (unPrism prism) outer)
 
+is :: outer -> Prism outer inner -> Bool
+is outer prism = isJust (getWhen prism outer)
+
+isn't :: outer -> Prism outer inner -> Bool
+isn't outer prism = not (is outer prism)
+
 constructFrom :: Prism outer inner -> inner -> outer
 constructFrom prism inner = fst (unPrism prism) inner
 

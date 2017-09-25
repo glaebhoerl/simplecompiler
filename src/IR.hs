@@ -7,13 +7,11 @@ module IR (
     Style (..), Color (..), defaultStyle
 ) where
 
-
-import MyPrelude hiding (BinaryOperator (..))
+import MyPrelude
 
 import qualified Data.Map.Strict           as Map
 import qualified Data.Text.Prettyprint.Doc as P
 
-import qualified MyPrelude as AST (BinaryOperator (..))
 import qualified AST       as AST
 import qualified Name      as AST
 import qualified Type      as AST
@@ -65,8 +63,7 @@ data Value
 data Expression
     = Value              !Value
     | UnaryOperator      !UnaryOperator             !Value
-    | ArithmeticOperator !Value !ArithmeticOperator !Value
-    | ComparisonOperator !Value !ComparisonOperator !Value
+    | BinaryOperator     !Value !BinaryOperator     !Value
     | Ask                !Text
     deriving (Generic, Eq, Show)
 
@@ -101,11 +98,13 @@ instance TypeOf Expression where
     typeOf = \case
         Value (Literal _)        -> Int
         Value (Named name)       -> nameType name
-        UnaryOperator Not _      -> Bool
-        UnaryOperator Negate _   -> Int
-        ArithmeticOperator _ _ _ -> Int
-        ComparisonOperator _ _ _ -> Bool
-        Ask _                    -> Int
+        UnaryOperator Not      _ -> Bool
+        UnaryOperator Negate   _ -> Int
+        BinaryOperator _ op    _ -> case op of
+            ArithmeticOperator _ -> Int
+            ComparisonOperator _ -> Bool
+            LogicalOperator    _ -> Bool
+        Ask                    _ -> Int
 
 instance TypeOf Block where
     typeOf = Parameters . map nameType . arguments
@@ -148,17 +147,8 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         value <- translateTemporary expr
         name  <- emitNamedLet (UnaryOperator op value)
         return (Named name)
-    AST.BinaryOperator expr1 (AST.ArithmeticOperator op) expr2 -> do
-        value1 <- translateTemporary expr1
-        value2 <- translateTemporary expr2
-        name   <- emitNamedLet (ArithmeticOperator value1 op value2)
-        return (Named name)
-    AST.BinaryOperator expr1 (AST.ComparisonOperator op) expr2 -> do -- TODO deduplicate these two maybe
-        value1 <- translateTemporary expr1
-        value2 <- translateTemporary expr2
-        name   <- emitNamedLet  (ComparisonOperator value1 op value2)
-        return (Named name)
-    AST.BinaryOperator expr1 (AST.LogicalOperator op) expr2 -> do
+    -- Logical operators are short-circuiting, so we can't just emit them as simple statements, except when the RHS is already a Value.
+    AST.BinaryOperator expr1 (LogicalOperator op) expr2 | (expr2 `isn't` constructor @"Literal" && expr2 `isn't` constructor @"Named") -> do
         value1 <- translateTemporary expr1
         let opName = toLower (showText op)
         joinPoint <- currentContinuation ("join_" ++ opName) (Parameters [Bool]) -- TODO use the provided name for the arg!
@@ -171,6 +161,11 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         emitTransfer (Branch value1 branches)
         args <- currentArguments
         return (Named (assert (head args)))
+    AST.BinaryOperator expr1 op expr2 -> do
+        value1 <- translateTemporary expr1
+        value2 <- translateTemporary expr2
+        name   <- emitNamedLet (BinaryOperator value1 op value2)
+        return (Named name)
     AST.Ask text -> do
         name <- emitNamedLet (Ask text)
         return (Named name)
@@ -492,10 +487,12 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
             UnaryOperator _ value -> do
                 -- we abuse the fact that the unary ops have matching input and output types
                 checkValue (typeOf expr) value
-            ArithmeticOperator value1 _ value2 -> do
-                mapM_ (checkValue Int) [value1, value2]
-            ComparisonOperator value1 _ value2 -> do
-                mapM_ (checkValue Int) [value1, value2]
+            BinaryOperator value1 op value2 -> do
+                mapM_ (checkValue opInputType) [value1, value2] where
+                    opInputType = case op of
+                        ArithmeticOperator _ -> Int
+                        ComparisonOperator _ -> Int
+                        LogicalOperator    _ -> Bool
             Ask _ -> do
                 return ()
     checkValue expectedType value = do
@@ -606,11 +603,10 @@ render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
     renderTarget target = blockID False (targetBlock target) ++ parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
 
     renderExpr = \case
-        Value              value            -> renderValue value
-        UnaryOperator      op value         -> unaryOp op ++ renderValue value
-        ArithmeticOperator value1 op value2 -> renderValue value1 ++ " " ++ arithOp op ++ " " ++ renderValue value2
-        ComparisonOperator value1 op value2 -> renderValue value1 ++ " " ++ cmpOp   op ++ " " ++ renderValue value2
-        Ask                text             -> builtin "ask" ++ parens (string text)
+        Value          value            -> renderValue value
+        UnaryOperator  op value         -> unaryOperator op ++ renderValue value
+        BinaryOperator value1 op value2 -> renderValue value1 ++ " " ++ binaryOperator op ++ " " ++ renderValue value2
+        Ask            text             -> builtin "ask" ++ parens (string text)
 
     renderValue = \case
         Named   name -> letID False name
@@ -636,22 +632,26 @@ render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
     typedName name = letID True name ++ colon ++ " " ++ type' (nameType name)
 
     -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
-    unaryOp = operator . \case
-        Not    -> "!"
-        Negate -> "-"
-    arithOp = operator . \case
-        Add -> "+"
-        Sub -> "-"
-        Mul -> "*"
-        Div -> "/"
-        Mod -> "%"
-    cmpOp = operator . \case
-        Equal        -> "=="
-        NotEqual     -> "!="
-        Less         -> "<"
-        LessEqual    -> "<="
-        Greater      -> ">"
-        GreaterEqual -> ">="
+    unaryOperator  = operator . \case
+        Not                   -> "!"
+        Negate                -> "-"
+    binaryOperator = operator . \case
+        ArithmeticOperator op -> case op of
+            Add               -> "+"
+            Sub               -> "-"
+            Mul               -> "*"
+            Div               -> "/"
+            Mod               -> "%"
+        ComparisonOperator op -> case op of
+            Equal             -> "=="
+            NotEqual          -> "!="
+            Less              -> "<"
+            LessEqual         -> "<="
+            Greater           -> ">"
+            GreaterEqual      -> ">="
+        LogicalOperator    op -> case op of
+            And               -> "&&"
+            Or                -> "||"
 
 data Style = Style {
     color        :: !(Maybe Color),
