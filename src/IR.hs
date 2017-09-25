@@ -437,6 +437,25 @@ data Scope = Scope {
     parent :: !(Maybe Scope)
 } deriving Generic
 
+-- this is basically the use case for `dependent-map`, but this seems simpler for now
+insertID :: ID node -> Type node -> Scope -> Scope
+insertID ident nameType = case ident of
+    Return    -> bug "Tried to insert the special builtin `return` block into the context!"
+    BlockID _ -> modify (field @"blocks") (Map.insert ident nameType)
+    LetID   _ -> modify (field @"lets")   (Map.insert ident nameType)
+    ASTName _ -> modify (field @"lets")   (Map.insert ident nameType)
+
+lookupID :: ID node -> Scope -> Maybe (Type node)
+lookupID ident Scope { lets, blocks, parent } = case ident of
+    Return    -> Just (nameType returnToCaller)
+    BlockID _ -> orLookupInParent (Map.lookup ident blocks)
+    LetID   _ -> orLookupInParent (Map.lookup ident lets)
+    ASTName _ -> orLookupInParent (Map.lookup ident lets)
+    where orLookupInParent = maybe (join (fmap (lookupID ident) parent)) Just
+
+memberID :: ID node -> Scope -> Bool
+memberID ident = isJust . lookupID ident
+
 validate :: Block -> Either ValidationError ()
 validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlock (Parameters []) where
     checkBlock expectedType block = do
@@ -510,21 +529,6 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
             Just recordedType -> do
                 when (nameType != recordedType) $ do
                     throwError (Inconsistent (Name ident nameType) (Name ident recordedType))
-    -- this is basically the use case for `dependent-map`, but this seems simpler for now
-    insertID :: ID node -> Type node -> Scope -> Scope
-    insertID ident nameType = case ident of
-        Return    -> bug "Tried to insert the special builtin `return` block into the context!"
-        BlockID _ -> modify (field @"blocks") (Map.insert ident nameType)
-        LetID   _ -> modify (field @"lets")   (Map.insert ident nameType)
-        ASTName _ -> modify (field @"lets")   (Map.insert ident nameType)
-    lookupID :: ID node -> Scope -> Maybe (Type node)
-    lookupID ident Scope { lets, blocks, parent } = case ident of
-        Return    -> Just (nameType returnToCaller)
-        BlockID _ -> orLookupInParent (Map.lookup ident blocks)
-        LetID   _ -> orLookupInParent (Map.lookup ident lets)
-        ASTName _ -> orLookupInParent (Map.lookup ident lets)
-        where orLookupInParent = maybe (join (fmap (lookupID ident) parent)) Just
-    memberID ident = isJust . lookupID ident
 
 
 
