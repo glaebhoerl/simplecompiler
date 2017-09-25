@@ -2,7 +2,7 @@
 
 module IR (
     Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), paramTypes, returnToCaller, typeOf, translate,
-    ValidationError (..), validate,
+    ValidationError (..), validate, eliminateTrivialBlocks,
     Info (..), LiteralType (..), IdentInfo (..), IdentName (..), render,
     Style (..), Color (..), defaultStyle
 ) where
@@ -12,9 +12,9 @@ import MyPrelude
 import qualified Data.Map.Strict           as Map
 import qualified Data.Text.Prettyprint.Doc as P
 
-import qualified AST       as AST
-import qualified Name      as AST
-import qualified Type      as AST
+import qualified AST  as AST
+import qualified Name as AST
+import qualified Type as AST
 
 
 ---------------------------------------------------------------------------------------------------- TYPE DEFINITIONS
@@ -530,6 +530,42 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
             Just recordedType -> do
                 when (nameType != recordedType) $ do
                     throwError (Inconsistent (Name ident nameType description) (Name ident recordedType ""))
+
+
+
+
+---------------------------------------------------------------------------------------------------- TRANSFORMS
+
+eliminateTrivialBlocks :: Block -> Block
+eliminateTrivialBlocks = evalState Map.empty . visitBlock where
+    visitBlock Block { arguments, body, transfer } = do
+        newBody     <- liftM catMaybes (mapM visitStatement body)
+        newTransfer <- visitTransfer transfer
+        return (Block arguments newBody newTransfer)
+    visitStatement = \case
+        BlockDecl name (Block [] [] (Jump target)) | (targetBlock target) != name -> do
+            modifyState (Map.insert name target)
+            return Nothing
+        BlockDecl name nonTrivialBlock -> do
+            newBlock <- visitBlock nonTrivialBlock
+            return (Just (BlockDecl name newBlock))
+        otherStatement -> do
+            return (Just otherStatement)
+    visitTransfer = \case
+        Jump target -> do
+            newTarget <- adjustedTarget target
+            return (Jump newTarget)
+        Branch value targets -> do
+            newTargets <- mapM adjustedTarget targets
+            return (Branch value newTargets)
+    adjustedTarget target = do
+        foundTarget <- liftM (Map.lookup (targetBlock target)) getState
+        case foundTarget of
+            Nothing -> do
+                return target
+            Just newTarget -> do
+                assertM (targetArgs target == []) -- if the block we're eliminating had arguments, it's not trivial!
+                adjustedTarget newTarget
 
 
 
