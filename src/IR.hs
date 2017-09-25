@@ -1,13 +1,16 @@
 {-# LANGUAGE AllowAmbiguousTypes #-} -- for `idIsEven`
 
 module IR (
-    Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), returnToCaller, typeOf, translate,
-    Info (..), LiteralType (..), IdentInfo (..), IdentName (..), render, Style (..), Color (..), defaultStyle
+    Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), paramTypes, returnToCaller, typeOf, translate,
+    ValidationError (..), validate,
+    Info (..), LiteralType (..), IdentInfo (..), IdentName (..), render,
+    Style (..), Color (..), defaultStyle
 ) where
 
 
 import MyPrelude hiding (BinaryOperator (..))
 
+import qualified Data.Map.Strict           as Map
 import qualified Data.Text.Prettyprint.Doc as P
 
 import qualified MyPrelude as AST (BinaryOperator (..))
@@ -22,6 +25,9 @@ data Type node where
     Int        :: Type Expression
     Bool       :: Type Expression
     Parameters :: ![Type Expression] -> Type Block
+
+paramTypes :: Type Block -> [Type Expression]
+paramTypes (Parameters types) = types
 
 deriving instance Eq   (Type node)
 deriving instance Show (Type node)
@@ -328,8 +334,8 @@ instance TranslateM Translate where
         return name
 
     emitBlock :: Type Block -> Translate Transfer -> Translate (Name Block)
-    emitBlock paramTypes translateBody = do
-        pushBlock paramTypes
+    emitBlock argTypes translateBody = do
+        pushBlock argTypes
         blockName                <- currentBlock
         ~(blockID, finishedBlock) <- liftM assert (backGetM (field @"thisBlock")) -- FIXME need a lazy match here to avoid a <<loop>>
         transferAtEnd            <- translateBody
@@ -409,6 +415,117 @@ block main() {
     branch foo [if1, join1]
 }
 -}
+
+
+
+
+---------------------------------------------------------------------------------------------------- VALIDATION
+
+data ValidationError where
+    NotInScope     :: !(ID node)                         -> ValidationError
+    Redefined      :: !(ID node)                         -> ValidationError
+    Inconsistent   :: !(Name node) -> !(Name node)       -> ValidationError
+    TypeMismatch   :: Show node => !(Type node) -> !node -> ValidationError
+    BadTargetCount :: ![Target]                          -> ValidationError
+    BadArgsCount   :: !Target                            -> ValidationError
+
+deriving instance Show ValidationError
+
+data Scope = Scope {
+    lets   :: !(Map (ID Expression) (Type Expression)),
+    blocks :: !(Map (ID Block)      (Type Block)),
+    parent :: !(Maybe Scope)
+} deriving Generic
+
+validate :: Block -> Either ValidationError ()
+validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlock (Parameters []) where
+    checkBlock expectedType block = do
+        checkType expectedType block
+        modifyState (\parent -> Scope Map.empty Map.empty (Just parent))
+        mapM_ recordID       (arguments block)
+        mapM_ checkStatement (body      block)
+        checkTransfer        (transfer  block)
+        modifyState (assert . parent)
+    checkStatement = \case
+        BlockDecl name block -> do
+            recordID name -- block name is in scope for body
+            checkBlock (nameType name) block
+        Let name expr -> do
+            checkExpression (nameType name) expr
+            recordID name -- let name is not in scope for rhs
+        Assign name value -> do
+            checkID name
+            checkValue (nameType name) value
+        Say _ -> do
+            return ()
+        Write value -> do
+            checkValue Int value
+    checkExpression expectedType expr = do
+        checkType expectedType expr
+        case expr of
+            Value value -> do
+                -- we already checked the type, we just want to check if it's in scope
+                checkValue (typeOf expr) value
+            UnaryOperator _ value -> do
+                -- we abuse the fact that the unary ops have matching input and output types
+                checkValue (typeOf expr) value
+            ArithmeticOperator value1 _ value2 -> do
+                mapM_ (checkValue Int) [value1, value2]
+            ComparisonOperator value1 _ value2 -> do
+                mapM_ (checkValue Int) [value1, value2]
+            Ask _ -> do
+                return ()
+    checkValue expectedType value = do
+        checkType expectedType (Value value)
+        case value of
+            Named   name -> checkID name
+            Literal _    -> return ()
+    checkTransfer = \case
+        Jump target -> do
+            checkTarget target
+        Branch value targets -> do
+            checkValue Bool value
+            when (length targets != 2) $ do
+                throwError (BadTargetCount targets)
+            mapM_ checkTarget targets
+    checkTarget target@Target { targetBlock, targetArgs } = do
+        checkID targetBlock
+        let expectedTypes = paramTypes (nameType targetBlock)
+        when (length expectedTypes != length targetArgs) $ do
+            throwError (BadArgsCount target)
+        zipWithM_ checkValue expectedTypes targetArgs
+    checkType expectedType node = do
+        when (typeOf node != expectedType) $ do
+            throwError (TypeMismatch expectedType node)
+    recordID Name { ident, nameType } = do
+        doModifyState $ \scope -> do
+            when (memberID ident scope) $ do
+                throwError (Redefined ident)
+            return (insertID ident nameType scope)
+    checkID Name { ident, nameType } = do
+        inContext <- liftM (lookupID ident) getState
+        case inContext of
+            Nothing -> do
+                throwError (NotInScope ident)
+            Just recordedType -> do
+                when (nameType != recordedType) $ do
+                    throwError (Inconsistent (Name ident nameType) (Name ident recordedType))
+    -- this is basically the use case for `dependent-map`, but this seems simpler for now
+    insertID :: ID node -> Type node -> Scope -> Scope
+    insertID ident nameType = case ident of
+        Return    -> bug "Tried to insert the special builtin `return` block into the context!"
+        BlockID _ -> modify (field @"blocks") (Map.insert ident nameType)
+        LetID   _ -> modify (field @"lets")   (Map.insert ident nameType)
+        ASTName _ -> modify (field @"lets")   (Map.insert ident nameType)
+    lookupID :: ID node -> Scope -> Maybe (Type node)
+    lookupID ident Scope { lets, blocks, parent } = case ident of
+        Return    -> Just (nameType returnToCaller)
+        BlockID _ -> orLookupInParent (Map.lookup ident blocks)
+        LetID   _ -> orLookupInParent (Map.lookup ident lets)
+        ASTName _ -> orLookupInParent (Map.lookup ident lets)
+        where orLookupInParent = maybe (join (fmap (lookupID ident) parent)) Just
+    memberID ident = isJust . lookupID ident
+
 
 
 

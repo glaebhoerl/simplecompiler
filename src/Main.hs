@@ -36,6 +36,7 @@ main = do
         assertM (Type.validate typedAST)
         let ir = IR.translate typedAST
         (P.putDoc . fmap (ansiStyle . IR.defaultStyle) . IR.render) ir
+        assertM (IR.validate ir)
 
 ansiStyle :: IR.Style -> P.AnsiStyle
 ansiStyle IR.Style { IR.color, IR.isDull, IR.isBold, IR.isItalic, IR.isUnderlined } = style where

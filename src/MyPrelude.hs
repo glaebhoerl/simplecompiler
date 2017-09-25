@@ -15,7 +15,7 @@ import Data.Either                      as Reexports        (isLeft, isRight{-, 
 import Data.Maybe                       as Reexports        (isJust, isNothing, fromMaybe, maybeToList, catMaybes, mapMaybe)
 import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
-import Control.Monad                    as Reexports        (liftM, forM, forM_, (>=>), (<=<), forever, void, join, filterM, foldM, zipWithM, replicateM, guard, when, unless)
+import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, (>=>), (<=<), forever, void, join, guard, when, unless)
 import Control.Monad.Fix                as Reexports        (MonadFix   (mfix))
 import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
 import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError, throwError, catchError, runExceptT, runExcept)
