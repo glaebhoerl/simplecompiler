@@ -432,6 +432,12 @@ prettyShow = LazyText.toStrict . Text.Pretty.Simple.pShowLightBg
 prettyPrint :: Show a => a -> IO ()
 prettyPrint = Text.Pretty.Simple.pPrintLightBg
 
+stringToText :: String -> Text
+stringToText = Text.pack
+
+textToString :: Text -> String
+textToString = Text.unpack
+
 
 
 -------------------------------------------------------------------------- asserts

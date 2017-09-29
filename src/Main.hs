@@ -3,6 +3,9 @@ module Main where
 import MyPrelude
 
 import qualified Data.Text.Prettyprint.Doc.Render.Terminal as P
+import qualified LLVM.Context as L
+import qualified LLVM.Module  as L
+import qualified LLVM.Target  as L
 
 import qualified Token
 --import Token (Token)
@@ -13,6 +16,7 @@ import qualified Name
 import qualified Type
 --import Type (Type)
 import qualified IR
+import qualified LLVM
 
 thenTry :: (Show b, Show e) => IO (Maybe a) -> (a -> Either e b) -> IO (Maybe b)
 thenTry getPrev process = do
@@ -21,7 +25,7 @@ thenTry getPrev process = do
         Nothing -> return Nothing
         Just result -> do
             let processed = process result
-            prettyPrint processed
+            --prettyPrint processed
             return (right processed)
 
 main :: IO ()
@@ -41,6 +45,13 @@ main = do
         let ir2 = IR.eliminateTrivialBlocks ir
         printIR ir2
         assertM (IR.validate ir2)
+        let astModule = LLVM.translate ir2
+        L.withContext $ \context ->
+            L.withModuleFromAST context astModule $ \compiledModule ->
+                L.withHostTargetMachine $ \target ->
+                    L.writeObjectToFile target (L.File "a.out") compiledModule
+
+
 
 ansiStyle :: IR.Style -> P.AnsiStyle
 ansiStyle IR.Style { IR.color, IR.isDull, IR.isBold, IR.isItalic, IR.isUnderlined } = style where

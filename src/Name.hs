@@ -1,8 +1,9 @@
-module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..), resolveNames, ValidationError (..), validate) where
+module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..), renderName, resolveNames, ValidationError (..), validate) where
 
 import MyPrelude
 
 import qualified Data.Map as Map
+import Data.List (intercalate)
 
 import qualified AST
 import AST (AST)
@@ -14,6 +15,9 @@ data Name = Name {
     path      :: !Path,
     givenName :: !Text
 } deriving (Generic, Eq, Ord, Show)
+
+renderName :: Name -> Text
+renderName (Name path given) = stringToText (intercalate "." (map show path)) ++ "." ++ given
 
 data NameWith info = NameWith {
     name :: !Name,

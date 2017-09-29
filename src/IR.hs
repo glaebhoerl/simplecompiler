@@ -61,10 +61,10 @@ data Value
     deriving (Generic, Eq, Show)
 
 data Expression
-    = Value              !Value
-    | UnaryOperator      !UnaryOperator             !Value
-    | BinaryOperator     !Value !BinaryOperator     !Value
-    | Ask                !Text
+    = Value          !Value
+    | UnaryOperator  !UnaryOperator !Value
+    | BinaryOperator !Value !BinaryOperator !Value
+    | Ask            !Text
     deriving (Generic, Eq, Show)
 
 data Statement
@@ -519,7 +519,7 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
             throwError (TypeMismatch expectedType node)
     recordID Name { ident, nameType } = do
         doModifyState $ \scope -> do
-            when (memberID ident scope) $ do
+            when (memberID ident scope) $ do -- FIXME this should be a shallow check?
                 throwError (Redefined ident)
             return (insertID ident nameType scope)
     checkID Name { ident, nameType, description } = do
@@ -543,7 +543,7 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
         newTransfer <- visitTransfer transfer
         return (Block arguments newBody newTransfer)
     visitStatement = \case
-        BlockDecl name (Block [] [] (Jump target)) | (targetBlock target) != name -> do
+        BlockDecl name (Block [] [] (Jump target)) | targetBlock target != name -> do
             modifyState (Map.insert name target)
             return Nothing
         BlockDecl name nonTrivialBlock -> do
@@ -553,19 +553,19 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
             return (Just otherStatement)
     visitTransfer = \case
         Jump target -> do
-            newTarget <- adjustedTarget target
+            newTarget <- getAdjustedTarget target
             return (Jump newTarget)
         Branch value targets -> do
-            newTargets <- mapM adjustedTarget targets
+            newTargets <- mapM getAdjustedTarget targets
             return (Branch value newTargets)
-    adjustedTarget target = do
-        foundTarget <- liftM (Map.lookup (targetBlock target)) getState
-        case foundTarget of
+    getAdjustedTarget oldTarget = do
+        maybeNewTarget <- liftM (Map.lookup (targetBlock oldTarget)) getState
+        case maybeNewTarget of
             Nothing -> do
-                return target
-            Just newTarget -> do
-                assertM (targetArgs target == []) -- if the block we're eliminating had arguments, it's not trivial!
-                adjustedTarget newTarget
+                return oldTarget
+            Just adjustedTarget -> do
+                assertM (targetArgs oldTarget == []) -- if the block we're eliminating had arguments, it's not trivial!
+                getAdjustedTarget adjustedTarget -- check if this block was _also_ trivial
 
 
 
