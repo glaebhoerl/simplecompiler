@@ -1,3 +1,8 @@
+-- we want to use `functionDefaults` and `globalVariableDefaults` and so on without warnings
+-- (maybe it would be better if llvm-hs split these out into their own types so the record updates
+-- would not be incomplete, but ¯\_(_/¯ツ)_/¯)
+{-# OPTIONS_GHC -Wno-incomplete-record-updates #-}
+
 module LLVM (translate, Module) where
 
 import MyPrelude
@@ -181,18 +186,20 @@ store name operand = do
 
 translateValue :: LLVM m => IR.Value -> m Operand
 translateValue = \case
-    IR.Literal number -> do
-        return (numberWithBits 64 (fromIntegral number))
+    IR.Literal value -> do
+        return (number (Bits 64) (fromIntegral value))
     IR.Named name -> do
         load name
 
-numberWithBits :: Word32 -> Integer -> Operand
-numberWithBits bits value = ConstantOperand (LC.Int { LC.integerBits = bits, LC.integerValue = value })
+newtype Bits = Bits Word32
+
+number :: Bits -> Integer -> Operand
+number (Bits bits) value = ConstantOperand (LC.Int { LC.integerBits = bits, LC.integerValue = value })
 
 translateUnaryOp :: Operand -> UnaryOperator -> Instruction
 translateUnaryOp operand = \case
-    Not    -> L.Xor { L.operand0 = numberWithBits 1  1, L.operand1 = operand, L.metadata = [] }
-    Negate -> L.Sub { L.operand0 = numberWithBits 64 0, L.operand1 = operand, L.metadata = [], L.nsw = False, L.nuw = False }
+    Not    -> L.Xor { L.operand0 = number (Bits 1)  1, L.operand1 = operand, L.metadata = [] }
+    Negate -> L.Sub { L.operand0 = number (Bits 64) 0, L.operand1 = operand, L.metadata = [], L.nsw = False, L.nuw = False }
 
 translateBinaryOp :: Operand -> Operand -> BinaryOperator -> Instruction
 translateBinaryOp operand0 operand1 = \case
@@ -268,7 +275,7 @@ translateStringLiteral text = do
     --   We'd need two separate ones: it expects a constant *pointer* as argument (not an array).
     let instr = L.GetElementPtr {
         L.address  = ConstantOperand (GlobalReference (ptr type') globalName),
-        L.indices  = replicate 2 (numberWithBits 32 0),
+        L.indices  = replicate 2 (number (Bits 32) 0),
         L.inBounds = False,
         L.metadata = []
     }
