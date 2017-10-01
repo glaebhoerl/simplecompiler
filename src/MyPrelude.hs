@@ -45,6 +45,8 @@ import Data.Functor.Identity (Identity (Identity, runIdentity))
 import Data.Profunctor (Profunctor (lmap, rmap), Choice (right'))
 
 import GHC.Stack (HasCallStack)
+import qualified GHC.Stack as Stack
+import qualified Debug.Trace
 
 
 
@@ -440,7 +442,7 @@ textToString = Text.unpack
 
 
 
--------------------------------------------------------------------------- asserts
+-------------------------------------------------------------------------- asserts and debugging
 
 {-# WARNING todo "TODO" #-}
 todo :: HasCallStack => a
@@ -454,26 +456,42 @@ class Assert x where
     msgAssert :: HasCallStack => Text -> x -> AssertResult x
 
 assert :: (HasCallStack, Assert x) => x -> AssertResult x
-assert = msgAssert ""
+assert = Stack.withFrozenCallStack (msgAssert "")
 
 assertM :: (HasCallStack, Assert x, Monad m) => x -> m (AssertResult x)
-assertM x = return $! assert x
+assertM x = Stack.withFrozenCallStack (return $! assert x)
 
 msgAssertM :: (HasCallStack, Assert x, Monad m) => Text -> x -> m (AssertResult x)
-msgAssertM msg x = return $! msgAssert msg x
+msgAssertM msg x = Stack.withFrozenCallStack (return $! msgAssert msg x)
 
 instance Assert Bool where
     type AssertResult Bool = ()
-    msgAssert msg = bool (bug ("Failed assertion! " ++ msg)) ()
+    msgAssert msg = Stack.withFrozenCallStack (bool (bug ("Failed assertion! " ++ msg)) ())
 
 instance Assert (Maybe a) where
     type AssertResult (Maybe a) = a
-    msgAssert msg = fromMaybe (bug ("Failed assertion! " ++ msg))
+    msgAssert msg = Stack.withFrozenCallStack (fromMaybe (bug ("Failed assertion! " ++ msg)))
 
 {- remove the Show constraint if it turns out to be problematic! -}
 instance Show e => Assert (Either e a) where
     type AssertResult (Either e a) = a
-    msgAssert msg = fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e))
+    msgAssert msg = Stack.withFrozenCallStack (fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e)))
+
+debug :: (HasCallStack, Show a) => a -> a
+debug a = Stack.withFrozenCallStack (trace (showText a) a)
+
+debugM :: (HasCallStack, Monad m, Show a) => a -> m ()
+debugM a = Stack.withFrozenCallStack (traceM (showText a))
+
+trace :: HasCallStack => Text -> a -> a
+trace text a = Debug.Trace.trace message a where
+    message = "DEBUG: " ++ textToString text ++ " [" ++ srcLoc ++ "]"
+    Stack.SrcLoc { Stack.srcLocFile, Stack.srcLocStartLine, Stack.srcLocStartCol } = snd (assert (head (Stack.getCallStack Stack.callStack)))
+    srcLoc = srcLocFile ++ ":" ++ show srcLocStartLine ++ ":" ++ show srcLocStartCol
+
+traceM :: (HasCallStack, Monad m) => Text -> m ()
+traceM text = Stack.withFrozenCallStack (trace text (return ()))
+
 
 
 
