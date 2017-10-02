@@ -3,9 +3,10 @@ module Main where
 import MyPrelude
 
 import qualified Data.Text.Prettyprint.Doc.Render.Terminal as P
-import qualified LLVM.Context as L
-import qualified LLVM.Module  as L
-import qualified LLVM.Target  as L
+import qualified LLVM.Analysis as L
+import qualified LLVM.Context  as L
+import qualified LLVM.Module   as L
+import qualified LLVM.Target   as L
 
 import qualified Token
 --import Token (Token)
@@ -47,11 +48,12 @@ main = do
         assertM (IR.validate ir2)
         let astModule = LLVM.translate ir2
         L.withContext $ \context ->
-            L.withModuleFromAST context astModule $ \compiledModule ->
+            L.withModuleFromAST context astModule $ \compiledModule -> do
+                renderedLLVM <- L.moduleLLVMAssembly compiledModule
+                putStrLn (byteStringToText renderedLLVM)
+                L.verify compiledModule
                 L.withHostTargetMachine $ \target ->
-                    L.writeObjectToFile target (L.File "a.out") compiledModule
-
-
+                    L.writeObjectToFile target (L.File "main.o") compiledModule
 
 ansiStyle :: IR.Style -> P.AnsiStyle
 ansiStyle IR.Style { IR.color, IR.isDull, IR.isBold, IR.isItalic, IR.isUnderlined } = style where

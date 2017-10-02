@@ -34,8 +34,9 @@ import qualified IR
 translate :: IR.Block -> Module
 translate block = result where
     result      = L.defaultModule { L.moduleDefinitions = definitions }
-    definitions = (map L.GlobalDefinition . fst . runSinglePass) generate
-    generate    = do
+    definitions = map L.GlobalDefinition (fst (runTwoPass generate))
+    generate :: LLVM m => m ()
+    generate = do
         emitGlobal externPrintf
         emitGlobal externScanf
         emitBlock "return" $ do
@@ -74,12 +75,12 @@ class Monad m => LLVM m where
 data CallsBlockWith = CallsBlockWith {
     calledBlock     :: !L.Name,
     argumentsPassed :: ![Operand]
-} deriving Generic
+} deriving (Generic, Eq, Show)
 
 data CalledByBlockWith = CalledByBlockWith {
     callingBlock      :: !L.Name,
     argumentsReceived :: ![Operand]
-} deriving Generic
+} deriving (Generic, Eq, Show)
 
 translatedType :: IR.Type IR.Expression -> L.Type
 translatedType = \case
@@ -300,8 +301,8 @@ translateArguments arguments = do
 
     -- [For each argument: (its IR name, [For each calling block: (the argument's value, the block's name)]]
     let argsWithCallers = zip arguments (transpose argsFromBlocks)
-    assertM (length argsWithCallers == length arguments)
-    assertM ((length . nub . map (length . snd)) argsWithCallers <= 1) -- double check each block passed the same # of args
+    --assertM (length argsWithCallers == length arguments)
+    --assertM ((length . nub . map (length . snd)) argsWithCallers <= 1) -- double check each block passed the same # of args
 
     argsWithPhis <- forM argsWithCallers $ \(argument, incomingValues) -> do
         let instr = L.Phi {
@@ -345,19 +346,52 @@ translateTarget IR.Target { IR.targetBlock, IR.targetArgs } = do
 
 
 
----------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #2 (BROKEN)
+---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #1
 
--- Single pass with Tardis monad -- DOESN'T WORK, hits a <<loop>>! :(
+-- Two passes with plain state monads
 
--- TODO name
-newtype SinglePass a = SinglePass {
-    runSinglePassInner :: Tardis Backwards Forwards a
-} deriving (Functor, Applicative, Monad, MonadFix, MonadState Forwards, MonadTardis Backwards Forwards)
+runTwoPass :: (forall m. LLVM m => m a) -> ([Global], a)
+runTwoPass generate = getOutput secondResult where
+    firstResult  = execState (FirstState 0 Map.empty) (runFirstPass generate)
+    secondResult = runState (SecondState 0 (callersMap firstResult) [] [] dummyBlock) (runSecondPass generate)
+    dummyBlock   = UnfinishedBlock (L.UnName maxBound) [] Nothing
+    getOutput (a, SecondState { globals, finishedBlocks, unfinishedBlocks }) =
+        if unfinishedBlocks != dummyBlock
+            then bug "The dummy block changed somehow!"
+            else (createdFunction : globals, a)
+                where createdFunction = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = finishedBlocks }
 
-type Backwards = Map L.Name [CalledByBlockWith]
+newtype FirstPass a = FirstPass {
+    runFirstPass :: State FirstState a
+} deriving (Functor, Applicative, Monad, MonadState FirstState)
 
-data Forwards = Forwards {
-    unNamer          :: !Word,
+data FirstState = FirstState {
+    freshNamer :: !Word,
+    callersMap :: !(Map L.Name [CalledByBlockWith])
+} deriving Generic
+
+instance LLVM FirstPass where
+    freshName = do
+        field @"freshNamer" += 1
+        num <- getM (field @"freshNamer")
+        return (L.UnName num)
+    emitBlock blockName bodyAction = do
+        (_, callsBlocksWith) <- bodyAction
+        forM_ callsBlocksWith $ \CallsBlockWith { calledBlock, argumentsPassed } -> do
+            when (argumentsPassed != []) $ do
+                let calledByThisBlock = CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }
+                modifyM (field @"callersMap") (Map.alter (Just . prepend calledByThisBlock . fromMaybe []) calledBlock)
+    emit       _ = return ()
+    emitGlobal _ = return ()
+    getArguments = return []
+
+newtype SecondPass a = SecondPass {
+    runSecondPass :: State SecondState a
+} deriving (Functor, Applicative, Monad, MonadState SecondState)
+
+data SecondState = SecondState {
+    secondNamer      :: !Word,
+    callersOfBlocks  :: !(Map L.Name [CalledByBlockWith]), -- readonly
     globals          :: ![Global],
     finishedBlocks   :: ![BasicBlock],
     unfinishedBlocks :: !UnfinishedBlock
@@ -369,36 +403,32 @@ data UnfinishedBlock = UnfinishedBlock {
     previousBlock :: !(Maybe UnfinishedBlock)
 } deriving (Generic, Eq)
 
-runSinglePass :: SinglePass a -> ([Global], a)
-runSinglePass = getOutput . runTardis (Map.empty, (Forwards 0 [] [] dummyBlock)) . runSinglePassInner where
-    dummyBlock = UnfinishedBlock (L.UnName maxBound) [] Nothing
-    getOutput (a, (_, Forwards { globals, finishedBlocks, unfinishedBlocks })) =
-        if unfinishedBlocks != dummyBlock
-            then bug "The dummy block changed somehow!"
-            else (createdFunction : globals, a)
-                where createdFunction = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = finishedBlocks }
-
-instance LLVM SinglePass where
+instance LLVM SecondPass where
     freshName = do
-        field @"unNamer" += 1
-        num <- getM (field @"unNamer")
+        field @"secondNamer" += 1
+        num <- getM (field @"secondNamer")
         return (L.UnName num)
-    emit instr = do
-        modifyM (field @"unfinishedBlocks" . field @"instructions") (++ [instr])
+    emit instruction = do
+        modifyM (field @"unfinishedBlocks" . field @"instructions") (++ [instruction])
     emitGlobal global = do
         modifyM (field @"globals") (prepend global)
     getArguments = do
         thisBlock <- getM (field @"unfinishedBlocks" . field @"blockName")
-        callees   <- backGetState
-        return (Map.findWithDefault [] thisBlock callees)
+        callers   <- getM (field @"callersOfBlocks")
+        return (Map.findWithDefault [] thisBlock callers)
     emitBlock blockName bodyAction = do
         modifyM (field @"unfinishedBlocks") (UnfinishedBlock blockName [] . Just)
         (terminator, callsBlocksWith) <- bodyAction
+        -- here we just assert that the `callsBlocksWith` is the same as what we got in the first pass
         forM_ callsBlocksWith $ \CallsBlockWith { calledBlock, argumentsPassed } -> do
             -- TODO assert that the `calledBlock` is one of those in `terminator`
-            when (argumentsPassed != []) $ do
-                let calledByThisBlock = CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }
-                backModifyState (Map.alter (Just . prepend calledByThisBlock . fromMaybe []) calledBlock)
+            savedCallers <- liftM (Map.findWithDefault [] calledBlock) (getM (field @"callersOfBlocks"))
+            let calledByUs = filter (\CalledByBlockWith { callingBlock } -> callingBlock == blockName) savedCallers
+            if argumentsPassed == []
+                then do
+                    assertM (calledByUs == [])
+                else do
+                    assertM (calledByUs == [CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }])
         doModifyM (field @"finishedBlocks") $ \finishedBlocks -> do
             instructions <- getM (field @"unfinishedBlocks" . field @"instructions")
             savedName    <- getM (field @"unfinishedBlocks" . field @"blockName")
@@ -406,3 +436,67 @@ instance LLVM SinglePass where
             let newBlock = BasicBlock savedName instructions (Do terminator)
             return (newBlock : finishedBlocks) -- NOTE: prepending is important for the correctness of `translate`
         modifyM (field @"unfinishedBlocks" ) (assert . previousBlock)
+
+
+
+
+---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #2 (BROKEN)
+
+-- Single pass with Tardis monad -- DOESN'T WORK, hits a <<loop>>! :(
+
+newtype SinglePass a = SinglePass {
+    runOnePass :: Tardis Backwards Forwards a
+} deriving (Functor, Applicative, Monad, MonadFix, MonadState Forwards, MonadTardis Backwards Forwards)
+
+type Backwards = Map L.Name [CalledByBlockWith]
+
+data Forwards = Forwards {
+    unNamer           :: !Word,
+    globals_          :: ![Global],
+    finishedBlocks_   :: ![BasicBlock],
+    unfinishedBlocks_ :: !UnfinishedBlock_
+} deriving Generic
+
+data UnfinishedBlock_ = UnfinishedBlock_ {
+    blockName_     :: !L.Name,
+    instructions_  :: ![Named Instruction],
+    previousBlock_ :: !(Maybe UnfinishedBlock_)
+} deriving (Generic, Eq)
+
+runSinglePass :: (forall m. LLVM m => m a) -> ([Global], a) -- TODO fix type errors
+runSinglePass = getOutput . runTardis (Map.empty, (Forwards 0 [] [] dummyBlock)) . runOnePass where
+    dummyBlock = UnfinishedBlock_ (L.UnName maxBound) [] Nothing
+    getOutput (a, (_, Forwards { globals_, finishedBlocks_, unfinishedBlocks_ })) =
+        if unfinishedBlocks_ != dummyBlock
+            then bug "The dummy block changed somehow!"
+            else (createdFunction : globals_, a)
+                where createdFunction = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = finishedBlocks_ }
+
+instance LLVM SinglePass where
+    freshName = do
+        field @"unNamer" += 1
+        num <- getM (field @"unNamer")
+        return (L.UnName num)
+    emit instr = do
+        modifyM (field @"unfinishedBlocks_" . field @"instructions_") (++ [instr])
+    emitGlobal global = do
+        modifyM (field @"globals_") (prepend global)
+    getArguments = do
+        thisBlock <- getM (field @"unfinishedBlocks_" . field @"blockName_")
+        callees   <- backGetState
+        return (Map.findWithDefault [] thisBlock callees)
+    emitBlock blockName bodyAction = do
+        modifyM (field @"unfinishedBlocks_") (UnfinishedBlock_ blockName [] . Just)
+        (terminator, callsBlocksWith) <- bodyAction
+        forM_ callsBlocksWith $ \CallsBlockWith { calledBlock, argumentsPassed } -> do
+            -- TODO assert that the `calledBlock` is one of those in `terminator`
+            when (argumentsPassed != []) $ do
+                let calledByThisBlock = CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }
+                backModifyState (Map.alter (Just . prepend calledByThisBlock . fromMaybe []) calledBlock)
+        doModifyM (field @"finishedBlocks_") $ \finishedBlocks -> do
+            instructions <- getM (field @"unfinishedBlocks_" . field @"instructions_")
+            savedName    <- getM (field @"unfinishedBlocks_" . field @"blockName_")
+            assertM (blockName == savedName)
+            let newBlock = BasicBlock savedName instructions (Do terminator)
+            return (newBlock : finishedBlocks) -- NOTE: prepending is important for the correctness of `translate`
+        modifyM (field @"unfinishedBlocks_") (assert . previousBlock_)
