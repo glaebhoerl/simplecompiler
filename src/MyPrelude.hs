@@ -21,6 +21,7 @@ import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
 import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError, throwError, catchError, runExceptT, runExcept)
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
 import Control.Monad.Tardis             as Reexports        (TardisT, Tardis, MonadTardis)
+import Data.ByteString                  as Reexports        (ByteString)
 import Data.Text                        as Reexports        (Text, toLower, toUpper)
 import Data.Text.Prettyprint.Doc        as Reexports        (Doc)
 import Data.Set                         as Reexports        (Set)
@@ -35,6 +36,7 @@ import Data.Generics.Product.Fields     as Reexports        (field)
 import qualified Prelude ((/=))
 import qualified Text.Pretty.Simple
 import qualified Data.Text                      as Text
+import qualified Data.Text.Encoding             as Text
 import qualified Data.Text.Lazy                 as LazyText
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
 import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis,
@@ -439,6 +441,12 @@ stringToText = Text.pack
 
 textToString :: Text -> String
 textToString = Text.unpack
+
+byteStringToText :: ByteString -> Text
+byteStringToText = Text.decodeUtf8
+
+textToByteString :: Text -> ByteString
+textToByteString = Text.encodeUtf8
 
 
 
