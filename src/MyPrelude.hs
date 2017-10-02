@@ -13,6 +13,7 @@ import Data.Int                         as Reexports        ( Int,  Int8,  Int16
 import Data.Word                        as Reexports        (Word, Word8, Word16, Word32, Word64)
 import Data.Either                      as Reexports        (isLeft, isRight{-, fromLeft, fromRight-})
 import Data.Maybe                       as Reexports        (isJust, isNothing, fromMaybe, maybeToList, catMaybes, mapMaybe)
+import Data.List                        as Reexports        (uncons, intercalate)
 import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
 import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, (>=>), (<=<), forever, void, join, guard, when, unless)
@@ -33,7 +34,7 @@ import Data.Generics.Product.Fields     as Reexports        (field)
 
 -------------------------------------------------------------------------- local imports
 
-import qualified Prelude ((/=))
+import qualified Prelude
 import qualified Text.Pretty.Simple
 import qualified Data.Text                      as Text
 import qualified Data.Text.Encoding             as Text
@@ -46,7 +47,7 @@ import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
 import Data.Profunctor (Profunctor (lmap, rmap), Choice (right'))
 
-import GHC.Stack (HasCallStack)
+import GHC.Stack (HasCallStack, withFrozenCallStack)
 import qualified GHC.Stack as Stack
 import qualified Debug.Trace
 
@@ -70,12 +71,12 @@ tail = \case
 (!=) :: Eq a => a -> a -> Bool
 (!=) = (Prelude./=)
 
-(%) :: Integral num => num -> num -> num
-(%) = mod
-
 
 
 -------------------------------------------------------------------------- other utility functions
+
+at :: Int -> [a] -> Maybe a
+at pos = head . drop pos
 
 prepend :: a -> [a] -> [a]
 prepend = (:)
@@ -109,6 +110,10 @@ fromRightOr f = either f id
 
 bool :: a -> a -> Bool -> a
 bool false true b = if b then true else false
+
+(%) :: Integral num => num -> num -> num
+(%) = mod
+
 
 
 -------------------------------------------------------------------------- Applicative and Alternative
@@ -322,6 +327,8 @@ lens /= n = modifyM lens (/ n)
 
 infixr 4 +=, -=, *=, /=
 
+-- we could have `%=`, but with *both* `%` and `%=` having different meanings relative to Haskell convention, it's probably too surprising
+
 
 
 -------------------------------------------------------------------------- tardis
@@ -428,7 +435,7 @@ doBackModifyWhenM prism modifyAction = mdo
 type LazyText = LazyText.Text
 
 showText :: Show a => a -> Text
-showText = Text.pack . show
+showText = stringToText . show
 
 prettyShow :: Show a => a -> Text
 prettyShow = LazyText.toStrict . Text.Pretty.Simple.pShowLightBg
@@ -450,6 +457,7 @@ textToByteString = Text.encodeUtf8
 
 
 
+
 -------------------------------------------------------------------------- asserts and debugging
 
 {-# WARNING todo "TODO" #-}
@@ -457,39 +465,47 @@ todo :: HasCallStack => a
 todo = error "TODO"
 
 bug :: HasCallStack => Text -> a
-bug x = error (Text.unpack ("BUG: " ++ x))
+bug x = error (textToString ("BUG: " ++ x))
 
 class Assert x where
     type AssertResult x
     msgAssert :: HasCallStack => Text -> x -> AssertResult x
 
 assert :: (HasCallStack, Assert x) => x -> AssertResult x
-assert = Stack.withFrozenCallStack (msgAssert "")
+assert = withFrozenCallStack $
+    msgAssert ""
 
 assertM :: (HasCallStack, Assert x, Monad m) => x -> m (AssertResult x)
-assertM x = Stack.withFrozenCallStack (return $! assert x)
+assertM x = withFrozenCallStack $
+    return $! assert x
 
 msgAssertM :: (HasCallStack, Assert x, Monad m) => Text -> x -> m (AssertResult x)
-msgAssertM msg x = Stack.withFrozenCallStack (return $! msgAssert msg x)
+msgAssertM msg x = withFrozenCallStack $
+    return $! msgAssert msg x
 
 instance Assert Bool where
     type AssertResult Bool = ()
-    msgAssert msg = Stack.withFrozenCallStack (bool (bug ("Failed assertion! " ++ msg)) ())
+    msgAssert msg = withFrozenCallStack $
+        bool (bug ("Failed assertion! " ++ msg)) ()
 
 instance Assert (Maybe a) where
     type AssertResult (Maybe a) = a
-    msgAssert msg = Stack.withFrozenCallStack (fromMaybe (bug ("Failed assertion! " ++ msg)))
+    msgAssert msg = withFrozenCallStack $
+        fromMaybe (bug ("Failed assertion! " ++ msg))
 
 {- remove the Show constraint if it turns out to be problematic! -}
 instance Show e => Assert (Either e a) where
     type AssertResult (Either e a) = a
-    msgAssert msg = Stack.withFrozenCallStack (fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e)))
+    msgAssert msg = withFrozenCallStack $
+        fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e))
 
 debug :: (HasCallStack, Show a) => a -> a
-debug a = Stack.withFrozenCallStack (trace (showText a) a)
+debug a = withFrozenCallStack $
+    trace (showText a) a
 
 debugM :: (HasCallStack, Monad m, Show a) => a -> m ()
-debugM a = Stack.withFrozenCallStack (traceM (showText a))
+debugM a = withFrozenCallStack $
+    traceM (showText a)
 
 trace :: HasCallStack => Text -> a -> a
 trace text a = Debug.Trace.trace message a where
@@ -498,7 +514,8 @@ trace text a = Debug.Trace.trace message a where
     srcLoc = srcLocFile ++ ":" ++ show srcLocStartLine ++ ":" ++ show srcLocStartCol
 
 traceM :: (HasCallStack, Monad m) => Text -> m ()
-traceM text = Stack.withFrozenCallStack (trace text (return ()))
+traceM text = withFrozenCallStack $
+    trace text (return ())
 
 
 

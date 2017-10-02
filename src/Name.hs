@@ -3,7 +3,6 @@ module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..)
 import MyPrelude
 
 import qualified Data.Map as Map
-import Data.List (intercalate)
 
 import qualified AST
 import AST (AST)
