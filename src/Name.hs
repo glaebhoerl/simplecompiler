@@ -149,7 +149,7 @@ data ValidationError info
 --  * A name is not defined more than once by the same scope.
 --  * The info stored alongside the name is the same at each of its occurrences.
 -- This does NOT check that:
---  * The `path` component of the name is correct. This is regarded as an implemntation detail, subject to change.
+--  * The `path` component of the name is correct. This is regarded as an implementation detail, subject to change.
 --  * The binding types are stored correctly. This is an unfortunate limitation of being polymorphic over the `info` type.
 validate :: Eq info => AST (NameWith info) -> Either (ValidationError info) ()
 validate = runExcept . evalStateT [] . validateBlock where

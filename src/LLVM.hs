@@ -295,22 +295,23 @@ translateArguments arguments = do
     calledByBlocks <- getArguments
 
     -- [For each calling block: [For each argument it passed: (the argument's value, the block's name)]]
-    argsFromBlocks <- forM calledByBlocks $ \CalledByBlockWith { callingBlock, argumentsReceived } -> do
+    blocksWithArgs <- forM calledByBlocks $ \CalledByBlockWith { callingBlock, argumentsReceived } -> do
         assertM (length argumentsReceived == length arguments)
         return (map (\operand -> (operand, callingBlock)) argumentsReceived)
 
-    -- [For each argument: (its IR name, [For each calling block: (the argument's value, the block's name)]]
-    let argsWithCallers = zip arguments (transpose argsFromBlocks)
-    --assertM (length argsWithCallers == length arguments)
+    -- [For each argument: (its IR name, its phi instruction name, [For each calling block: (the argument's value, the block's name)])]
+    argsWithCallers <- forM (zip arguments (transpose blocksWithArgs ++ repeat [])) $ \(argument, callers) -> do
+        phiName <- freshName
+        return (argument, phiName, callers)
+
     --assertM ((length . nub . map (length . snd)) argsWithCallers <= 1) -- double check each block passed the same # of args
 
-    argsWithPhis <- forM argsWithCallers $ \(argument, incomingValues) -> do
+    argsWithPhis <- forM argsWithCallers $ \(argument, phiName, incomingValues) -> do
         let instr = L.Phi {
             L.type'          = translatedType (IR.nameType argument),
             L.incomingValues = incomingValues,
             L.metadata       = []
         }
-        phiName <- freshName
         emit (phiName := instr)
         return (argument, LocalReference (translatedType (IR.nameType argument)) phiName)
 
@@ -424,6 +425,7 @@ instance LLVM SecondPass where
             -- TODO assert that the `calledBlock` is one of those in `terminator`
             savedCallers <- liftM (Map.findWithDefault [] calledBlock) (getM (field @"callersOfBlocks"))
             let calledByUs = filter (\CalledByBlockWith { callingBlock } -> callingBlock == blockName) savedCallers
+            -- TODO there is a probably a simpler way to express this?
             if argumentsPassed == []
                 then do
                     assertM (calledByUs == [])
