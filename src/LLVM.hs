@@ -52,7 +52,7 @@ translate block = result where
             emit (returnName32 := instr)
             let returnValue32 = LocalReference i32 returnName32
             return (L.Ret { L.returnOperand = Just returnValue32, L.metadata' = [] }, [])
-        emitBlock "start" $ do -- currently this will become the first basic block, as LLVM requires, because `emitBlock` prepends!
+        emitBlock "start" $ do -- NOTE the name "start" is significant (to `runTwoPass`)
             translateBlock block
     externPrintf = L.functionDefaults {
         LG.name        = "printf",
@@ -69,6 +69,7 @@ class Monad m => LLVM m where
     emitBlock    :: L.Name -> m (Terminator, [CallsBlockWith]) -> m ()
     getArguments :: m [CalledByBlockWith]
     emit         :: Named Instruction -> m ()
+    emitAlloca   :: L.Type -> L.Name -> m ()
     emitGlobal   :: Global -> m ()
     freshName    :: m L.Name
 
@@ -98,14 +99,7 @@ translatedID = \case
     IR.Return       -> "return"
 
 alloca :: LLVM m => IR.Name IR.Expression -> m ()
-alloca (IR.Name ident nameType _) = do
-    let instr = L.Alloca {
-        L.allocatedType = translatedType nameType,
-        L.numElements   = Nothing,
-        L.alignment     = 0,
-        L.metadata      = []
-    }
-    emit (translatedID ident := instr)
+alloca (IR.Name ident nameType _) = emitAlloca (translatedType nameType) (translatedID ident)
 
 load :: LLVM m => IR.Name IR.Expression -> m Operand
 load name = do
@@ -189,7 +183,7 @@ translateExpression expr = let localRef = LocalReference (translatedType (IR.typ
         emit (Do (call printf [printFormat, stringPtr]))
 
         scanFormat  <- translateStringLiteral "%26lld\n"
-        let instr = L.Alloca { -- TODO factor this out from `alloca`
+        let instr = L.Alloca { -- TODO factor this out from `emitAlloca`
             L.allocatedType = i64,
             L.numElements   = Nothing,
             L.alignment     = 0,
@@ -349,18 +343,23 @@ translateTarget IR.Target { IR.targetBlock, IR.targetArgs } = do
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #1
 
--- Two passes with plain state monads
+-- Two passes using plain state monads
 
 runTwoPass :: (forall m. LLVM m => m a) -> ([Global], a)
-runTwoPass generate = getOutput secondResult where
+runTwoPass generate = result where
     firstResult  = execState (FirstState 0 Map.empty) (runFirstPass generate)
-    secondResult = runState (SecondState 0 (callersMap firstResult) [] [] dummyBlock) (runSecondPass generate)
+    secondResult = runState (SecondState 0 (callersMap firstResult) [] [] [] dummyBlock) (runSecondPass generate)
     dummyBlock   = UnfinishedBlock (L.UnName maxBound) [] Nothing
-    getOutput (a, SecondState { globals, finishedBlocks, unfinishedBlocks }) =
-        if unfinishedBlocks != dummyBlock
-            then bug "The dummy block changed somehow!"
-            else (createdFunction : globals, a)
-                where createdFunction = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = finishedBlocks }
+    resultValue  = fst secondResult
+    SecondState {
+        globals,
+        allocas,
+        finishedBlocks,
+        unfinishedBlocks
+    }            = snd secondResult
+    allocaBlock  = BasicBlock "alloca" allocas (Do (L.Br { L.dest = "start", L.metadata' = [] }))
+    createdFn    = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = allocaBlock : finishedBlocks }
+    result       = if unfinishedBlocks == dummyBlock then (createdFn : globals, resultValue) else bug "The dummy block changed somehow!"
 
 newtype FirstPass a = FirstPass {
     runFirstPass :: State FirstState a
@@ -382,9 +381,10 @@ instance LLVM FirstPass where
             when (argumentsPassed != []) $ do
                 let calledByThisBlock = CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }
                 modifyM (field @"callersMap") (Map.alter (Just . prepend calledByThisBlock . fromMaybe []) calledBlock)
-    emit       _ = return ()
-    emitGlobal _ = return ()
-    getArguments = return []
+    emit       _   = return ()
+    emitAlloca _ _ = return ()
+    emitGlobal _   = return ()
+    getArguments   = return []
 
 newtype SecondPass a = SecondPass {
     runSecondPass :: State SecondState a
@@ -393,6 +393,7 @@ newtype SecondPass a = SecondPass {
 data SecondState = SecondState {
     secondNamer      :: !Word,
     callersOfBlocks  :: !(Map L.Name [CalledByBlockWith]), -- readonly
+    allocas          :: ![Named Instruction],
     globals          :: ![Global],
     finishedBlocks   :: ![BasicBlock],
     unfinishedBlocks :: !UnfinishedBlock
@@ -411,6 +412,14 @@ instance LLVM SecondPass where
         return (L.UnName num)
     emit instruction = do
         modifyM (field @"unfinishedBlocks" . field @"instructions") (++ [instruction])
+    emitAlloca type' name = do
+        let instr = L.Alloca {
+            L.allocatedType = type',
+            L.numElements   = Nothing,
+            L.alignment     = 0,
+            L.metadata      = []
+        }
+        modifyM (field @"allocas") (++ [name := instr])
     emitGlobal global = do
         modifyM (field @"globals") (prepend global)
     getArguments = do
@@ -436,7 +445,7 @@ instance LLVM SecondPass where
             savedName    <- getM (field @"unfinishedBlocks" . field @"blockName")
             assertM (blockName == savedName)
             let newBlock = BasicBlock savedName instructions (Do terminator)
-            return (newBlock : finishedBlocks) -- NOTE: prepending is important for the correctness of `translate`
+            return (newBlock : finishedBlocks)
         modifyM (field @"unfinishedBlocks" ) (assert . previousBlock)
 
 
@@ -455,6 +464,7 @@ type Backwards = Map L.Name [CalledByBlockWith]
 data Forwards = Forwards {
     unNamer           :: !Word,
     globals_          :: ![Global],
+    allocas_          :: ![Named Instruction],
     finishedBlocks_   :: ![BasicBlock],
     unfinishedBlocks_ :: !UnfinishedBlock_
 } deriving Generic
@@ -466,13 +476,18 @@ data UnfinishedBlock_ = UnfinishedBlock_ {
 } deriving (Generic, Eq)
 
 runSinglePass :: (forall m. LLVM m => m a) -> ([Global], a) -- TODO fix type errors
-runSinglePass = getOutput . runTardis (Map.empty, (Forwards 0 [] [] dummyBlock)) . runOnePass where
+runSinglePass = getOutput . runTardis (Map.empty, (Forwards 0 [] [] [] dummyBlock)) . runOnePass where
     dummyBlock = UnfinishedBlock_ (L.UnName maxBound) [] Nothing
-    getOutput (a, (_, Forwards { globals_, finishedBlocks_, unfinishedBlocks_ })) =
-        if unfinishedBlocks_ != dummyBlock
-            then bug "The dummy block changed somehow!"
-            else (createdFunction : globals_, a)
-                where createdFunction = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = finishedBlocks_ }
+    getOutput tardisResult =
+        let
+            resultValue = fst tardisResult
+            Forwards { globals_, allocas_, finishedBlocks_, unfinishedBlocks_ } = snd (snd tardisResult)
+            allocaBlock = BasicBlock "alloca" allocas_ (Do (L.Br { L.dest = "start", L.metadata' = [] }))
+            createdFn   = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = allocaBlock : finishedBlocks_ }
+        in
+            if unfinishedBlocks_ == dummyBlock
+                then (createdFn : globals_, resultValue)
+                else bug "The dummy block changed somehow!"
 
 instance LLVM SinglePass where
     freshName = do
@@ -481,6 +496,14 @@ instance LLVM SinglePass where
         return (L.UnName num)
     emit instr = do
         modifyM (field @"unfinishedBlocks_" . field @"instructions_") (++ [instr])
+    emitAlloca type' name = do
+        let instr = L.Alloca {
+            L.allocatedType = type',
+            L.numElements   = Nothing,
+            L.alignment     = 0,
+            L.metadata      = []
+        }
+        modifyM (field @"allocas_") (++ [name := instr])
     emitGlobal global = do
         modifyM (field @"globals_") (prepend global)
     getArguments = do
