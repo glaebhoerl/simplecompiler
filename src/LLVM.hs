@@ -182,7 +182,7 @@ translateExpression expr = let localRef = LocalReference (translatedType (IR.typ
         stringPtr   <- translateStringLiteral text
         emit (Do (call printf [printFormat, stringPtr]))
 
-        scanFormat  <- translateStringLiteral "%26lld\n"
+        scanFormat  <- translateStringLiteral "%26lld"
         let instr = L.Alloca { -- TODO factor this out from `emitAlloca`
             L.allocatedType = i64,
             L.numElements   = Nothing,
