@@ -3,10 +3,12 @@ module Main where
 import MyPrelude
 
 import qualified Data.Text.Prettyprint.Doc.Render.Terminal as P
-import qualified LLVM.Analysis as L
-import qualified LLVM.Context  as L
-import qualified LLVM.Module   as L
-import qualified LLVM.Target   as L
+import qualified LLVM.Analysis    as L
+import qualified LLVM.Context     as L
+import qualified LLVM.Module      as L
+import qualified LLVM.PassManager as L
+import qualified LLVM.Target      as L
+import qualified LLVM.Transforms  as L
 
 import qualified Token
 --import Token (Token)
@@ -47,13 +49,19 @@ main = do
         printIR ir2
         assertM (IR.validate ir2)
         let astModule = LLVM.translate ir2
-        L.withContext $ \context ->
-            L.withModuleFromAST context astModule $ \compiledModule -> do
-                renderedLLVM <- L.moduleLLVMAssembly compiledModule
-                putStrLn (byteStringToText renderedLLVM)
-                L.verify compiledModule
-                L.withHostTargetMachine $ \target ->
-                    L.writeObjectToFile target (L.File "main.o") compiledModule
+        L.withContext $ \context -> do
+            L.withModuleFromAST context astModule $ \llvmModule -> do
+                llvmAssembly <- L.moduleLLVMAssembly llvmModule
+                putStrLn (byteStringToText llvmAssembly)
+                L.verify llvmModule
+                L.withPassManager (L.PassSetSpec [L.PromoteMemoryToRegister] Nothing Nothing Nothing) $ \passManager -> do
+                    L.runPassManager passManager llvmModule
+                llvmAssembly2 <- L.moduleLLVMAssembly llvmModule
+                putStrLn (byteStringToText llvmAssembly2)
+                L.withHostTargetMachine $ \target -> do
+                    --targetAssembly <- L.moduleTargetAssembly target llvmModule
+                    --putStrLn (byteStringToText targetAssembly)
+                    L.writeObjectToFile target (L.File "main.o") llvmModule
 
 ansiStyle :: IR.Style -> P.AnsiStyle
 ansiStyle IR.Style { IR.color, IR.isDull, IR.isBold, IR.isItalic, IR.isUnderlined } = style where
