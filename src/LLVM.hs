@@ -7,7 +7,7 @@ module LLVM (translate, Module) where
 
 import MyPrelude
 
-import Data.List (transpose, nub)
+import Data.List (transpose)
 
 import qualified Data.Char
 
@@ -287,34 +287,30 @@ translateArguments :: LLVM m => [IR.Name IR.Expression] -> m ()
 translateArguments arguments = do
     -- [For each calling block: CalledByBlockWith { callingBlock = block's name, argumentsReceived = [values it passed for arguments] }]
     calledByBlocks <- getArguments
-
-    -- [For each calling block: [For each argument it passed: (the argument's value, the block's name)]]
-    blocksWithArgs <- forM calledByBlocks $ \CalledByBlockWith { callingBlock, argumentsReceived } -> do
+    forM_ calledByBlocks $ \CalledByBlockWith { argumentsReceived } -> do
         assertM (length argumentsReceived == length arguments)
-        return (map (\operand -> (operand, callingBlock)) argumentsReceived)
-
-    -- [For each argument: (its IR name, its phi instruction name, [For each calling block: (the argument's value, the block's name)])]
-    argsWithCallers <- forM (zip arguments (transpose blocksWithArgs ++ repeat [])) $ \(argument, callers) -> do
+    -- [For each calling block: [For each argument it passed: (the argument's value, the block's name)]]
+    let incomingValuesGroupedByBlock =
+            map (\CalledByBlockWith { callingBlock, argumentsReceived } ->
+                    map (\operand -> (operand, callingBlock))
+                        argumentsReceived)
+                calledByBlocks
+    -- [For each argument: [For each calling block: (the argument's value, the block's name)]]
+    let incomingValuesGroupedByArg = transpose incomingValuesGroupedByBlock
+    -- `++ repeat []` so we process all the arguments even if this block is never called (which is always the case in the FirstPass!!)
+    forM_ (zip arguments (incomingValuesGroupedByArg ++ repeat [])) $ \(argument, incomingValues) -> do
         phiName <- freshName
-        return (argument, phiName, callers)
-
-    --assertM ((length . nub . map (length . snd)) argsWithCallers <= 1) -- double check each block passed the same # of args
-
-    argsWithPhis <- forM argsWithCallers $ \(argument, phiName, incomingValues) -> do
-        let instr = L.Phi {
-            L.type'          = translatedType (IR.nameType argument),
-            L.incomingValues = incomingValues,
-            L.metadata       = []
-        }
-        emit (phiName := instr)
-        return (argument, LocalReference (translatedType (IR.nameType argument)) phiName)
-
-    -- We need to do this in two passes because all phis have to be at the beginning of the block (not mixed with e.g. allocas).
-    forM_ argsWithPhis $ \(arg, phi) -> do
-        -- HACK: We make an alloca for each argument, despite them never being mutated or anything,
-        -- just so we can refer to them consistently using the `allocaForLet` mapped names, just like normal `let`s.
-        alloca arg
-        store arg phi
+        when (incomingValues != []) $ do
+            let instr = L.Phi {
+                L.type'          = translatedType (IR.nameType argument),
+                L.incomingValues = incomingValues,
+                L.metadata       = []
+            }
+            emit (phiName := instr)
+            -- HACK: We make an alloca for each argument, despite them never being mutated or anything,
+            -- just so we can refer to them consistently using the `allocaForLet` mapped names, just like normal `let`s.
+            alloca argument
+            store argument (LocalReference (translatedType (IR.nameType argument)) phiName)
 
 translateTransfer :: LLVM m => IR.Transfer -> m (Terminator, [CallsBlockWith])
 translateTransfer = \case
