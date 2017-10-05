@@ -343,8 +343,8 @@ translateTarget IR.Target { IR.targetBlock, IR.targetArgs } = do
 
 runTwoPass :: (forall m. LLVM m => m a) -> ([Global], a)
 runTwoPass generate = result where
-    firstResult  = execState (FirstState 0 Map.empty) (runFirstPass generate)
-    secondResult = runState (SecondState 0 (callersMap firstResult) [] [] [] dummyBlock) (runSecondPass generate)
+    firstResult  = execState (FirstState 0 Map.empty)                                     (runFirstPass  generate)
+    secondResult = runState  (SecondState 0 (callersMap firstResult) [] [] [] dummyBlock) (runSecondPass generate)
     dummyBlock   = UnfinishedBlock (L.UnName maxBound) [] Nothing
     resultValue  = fst secondResult
     SecondState {
@@ -471,7 +471,7 @@ data UnfinishedBlock_ = UnfinishedBlock_ {
     previousBlock_ :: !(Maybe UnfinishedBlock_)
 } deriving (Generic, Eq)
 
-runSinglePass :: (forall m. LLVM m => m a) -> ([Global], a) -- TODO fix type errors
+runSinglePass :: (forall m. LLVM m => m a) -> ([Global], a)
 runSinglePass = getOutput . runTardis (Map.empty, (Forwards 0 [] [] [] dummyBlock)) . runOnePass where
     dummyBlock = UnfinishedBlock_ (L.UnName maxBound) [] Nothing
     getOutput tardisResult =
@@ -519,5 +519,5 @@ instance LLVM SinglePass where
             savedName    <- getM (field @"unfinishedBlocks_" . field @"blockName_")
             assertM (blockName == savedName)
             let newBlock = BasicBlock savedName instructions (Do terminator)
-            return (newBlock : finishedBlocks) -- NOTE: prepending is important for the correctness of `translate`
+            return (newBlock : finishedBlocks)
         modifyM (field @"unfinishedBlocks_") (assert . previousBlock_)
