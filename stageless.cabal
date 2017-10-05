@@ -89,6 +89,7 @@ executable stageless
                        llvm-hs,
                        llvm-hs-pure,
                        loc,
+                       managed,
                        mtl,
                        pretty-simple,
                        prettyprinter,

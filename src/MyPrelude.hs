@@ -7,7 +7,8 @@ module MyPrelude (module MyPrelude, module Reexports) where
 -------------------------------------------------------------------------- reexports
 
 import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl, (/=))
-import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile)
+import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, hGetContents, hPutStr)
+import System.IO                        as Reexports        (Handle, FilePath, IOMode (ReadMode, WriteMode, AppendMode, ReadWriteMode), stdin, stdout, stderr, withFile)
 import Data.Foldable                    as Reexports        (foldl')
 import Data.Int                         as Reexports        ( Int,  Int8,  Int16,  Int32,  Int64)
 import Data.Word                        as Reexports        (Word, Word8, Word16, Word32, Word64)
@@ -19,7 +20,11 @@ import Control.Applicative              as Reexports        (Alternative (empty,
 import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, (>=>), (<=<), forever, void, join, guard, when, unless)
 import Control.Monad.Fix                as Reexports        (MonadFix   (mfix))
 import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
-import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError, throwError, catchError, runExceptT, runExcept)
+import Control.Monad.IO.Class           as Reexports        (MonadIO    (liftIO))
+import Control.Monad.Managed.Safe       as Reexports        (Managed, MonadManaged (using), managed, runManaged)
+import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError,  throwError, catchError, runExceptT, runExcept)
+import Control.Monad.Reader             as Reexports        (ReaderT, Reader, MonadReader, ask, local)
+import Control.Monad.Writer.Strict      as Reexports        (WriterT, Writer, MonadWriter, tell, runWriterT, runWriter, execWriterT, execWriter)
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
 import Control.Monad.Tardis             as Reexports        (TardisT, Tardis, MonadTardis)
 import Data.ByteString                  as Reexports        (ByteString)
@@ -39,6 +44,7 @@ import qualified Text.Pretty.Simple
 import qualified Data.Text                      as Text
 import qualified Data.Text.Encoding             as Text
 import qualified Data.Text.Lazy                 as LazyText
+import qualified Control.Monad.Reader           as Reader      (runReaderT, runReader)
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
 import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis,
                                                                 getPast, sendFuture, {-modifyForwards, -}getFuture, sendPast, modifyBackwards)
@@ -75,6 +81,12 @@ tail = \case
 
 -------------------------------------------------------------------------- other utility functions
 
+(%) :: Integral num => num -> num -> num
+(%) = mod
+
+bool :: a -> a -> Bool -> a
+bool false true b = if b then true else false
+
 at :: Int -> [a] -> Maybe a
 at pos = head . drop pos
 
@@ -108,12 +120,25 @@ fromLeftOr f = either id f
 fromRightOr :: (a -> b) -> Either a b -> b
 fromRightOr f = either f id
 
-bool :: a -> a -> Bool -> a
-bool false true b = if b then true else false
+-- or Bifunctors I guess, or via `flip`, ...
+mapLeft :: (a -> a') -> Either a b -> Either a' b
+mapLeft f = either (Left . f) Right
 
-(%) :: Integral num => num -> num -> num
-(%) = mod
+try :: MonadError e m => Either e a -> m a
+try = either throwError return
 
+doTry :: MonadError e m => m (Either e a) -> m a
+doTry action = do
+    result <- action
+    try result
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM conditionAction action = do
+    condition <- conditionAction
+    when condition action
+
+usingManaged :: MonadManaged m => (forall r. (a -> IO r) -> IO r) -> m a
+usingManaged with = using (managed with)
 
 
 -------------------------------------------------------------------------- Applicative and Alternative
@@ -228,7 +253,13 @@ unPrism p =
 
 
 
--------------------------------------------------------------------------- state monad
+-------------------------------------------------------------------------- reader & state monad
+
+runReaderT :: r -> ReaderT r m a -> m a
+runReaderT = flip Reader.runReaderT
+
+runReader :: r -> Reader r a -> a
+runReader = flip Reader.runReader
 
 runStateT :: s -> StateT s m a -> m (a, s)
 runStateT = flip State.runStateT
