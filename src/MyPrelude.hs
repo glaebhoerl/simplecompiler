@@ -7,7 +7,7 @@ module MyPrelude (module MyPrelude, module Reexports) where
 -------------------------------------------------------------------------- reexports
 
 import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl, (/=))
-import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, hGetContents, hPutStr)
+import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, hGetContents, hPutStr, hPutStrLn)
 import System.IO                        as Reexports        (Handle, FilePath, IOMode (ReadMode, WriteMode, AppendMode, ReadWriteMode), stdin, stdout, stderr, withFile)
 import Data.Foldable                    as Reexports        (foldl')
 import Data.Int                         as Reexports        ( Int,  Int8,  Int16,  Int32,  Int64)
@@ -21,7 +21,7 @@ import Control.Monad                    as Reexports        (liftM, forM, forM_,
 import Control.Monad.Fix                as Reexports        (MonadFix   (mfix))
 import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
 import Control.Monad.IO.Class           as Reexports        (MonadIO    (liftIO))
-import Control.Monad.Managed.Safe       as Reexports        (Managed, MonadManaged (using), managed, runManaged)
+import Control.Monad.Managed.Safe       as Reexports        (Managed, MonadManaged (using), managed, managed_, runManaged)
 import Control.Monad.Except             as Reexports        (ExceptT, Except, MonadError,  throwError, catchError, runExceptT, runExcept)
 import Control.Monad.Reader             as Reexports        (ReaderT, Reader, MonadReader, ask, local)
 import Control.Monad.Writer.Strict      as Reexports        (WriterT, Writer, MonadWriter, tell, runWriterT, runWriter, execWriterT, execWriter)

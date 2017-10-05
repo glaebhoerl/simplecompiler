@@ -84,6 +84,7 @@ executable stageless
                        bound,
                        bytestring,
                        containers,
+                       directory,
                        Earley,
                        generic-lens,
                        llvm-hs,
@@ -94,6 +95,7 @@ executable stageless
                        pretty-simple,
                        prettyprinter,
                        prettyprinter-ansi-terminal,
+                       process,
                        profunctors,
                        tardis,
                        text

@@ -2,12 +2,16 @@ module Main where
 
 import MyPrelude
 
-import Data.List (partition, isPrefixOf)
+import Control.Exception  (SomeException, catch)
+import Data.List          (partition, isPrefixOf)
 import System.Environment (getArgs)
 
-import qualified Data.ByteString as ByteString
-
+import qualified System.Directory                          as Directory
+import qualified System.Exit                               as Exit
+import qualified System.Process                            as Process
+import qualified Data.ByteString                           as ByteString
 import qualified Data.Text.Prettyprint.Doc.Render.Terminal as Pretty
+
 import qualified LLVM.Analysis    as L
 import qualified LLVM.Context     as L
 import qualified LLVM.Module      as L
@@ -53,10 +57,9 @@ arguments = do
 getInput :: Command Text
 getInput = do
     Arguments { inFile } <- arguments
-    handle <- case inFile of
-        Nothing       -> return stdin
-        Just fileName -> usingManaged (withFile (textToString fileName) ReadMode) -- TODO catch exceptions :\
-    liftIO (hGetContents handle) -- TODO we could close it right now instead of waiting until exit...
+    case inFile of
+        Nothing       -> liftIO getContents
+        Just fileName -> liftIO (readFile (textToString fileName)) -- TODO catch exceptions :\
 
 tokens :: Command [Token]
 tokens = do
@@ -106,7 +109,7 @@ llvmModule = do
     liftIO (L.verify module') -- TODO is there an exception to catch??
     whenM (liftM optimize arguments) $ do -- FIXME if we generate invalid LLVM, we want to print it before verifying, otherwise after!
         passManager <- usingManaged (L.withPassManager (L.PassSetSpec [L.PromoteMemoryToRegister] Nothing Nothing Nothing))
-        liftIO (L.runPassManager passManager module')
+        _ <- liftIO (L.runPassManager passManager module')
         return ()
     return module'
 
@@ -128,7 +131,22 @@ obj = do
     liftIO (L.moduleTargetAssembly target module')
 
 build :: Command ()
-build = todo
+build = do
+    Arguments { inFile, outFile } <- arguments
+    let objFile = textToString (fromMaybe "stdin" inFile) ++ ".o"
+    module' <- llvmModule
+    target  <- usingManaged L.withHostTargetMachine
+    let removeOrIgnore file = liftIO (catch (Directory.removeFile file) (\(_ :: SomeException) -> return ())) -- ugh
+    using $ managed_ $ \body -> do
+        L.writeObjectToFile target (L.File objFile) module'
+        result <- body
+        removeOrIgnore objFile
+        return result
+    let args = objFile : maybe [] (prepend "-o" . single . textToString) outFile
+    (exitCode, out, err) <- liftIO (Process.readProcessWithExitCode "gcc" args "")
+    removeOrIgnore objFile
+    when (exitCode != Exit.ExitSuccess) $ do
+        throwError (stringToText ("GCC reported error:\n" ++ out ++ "\n" ++ err))
 
 run :: Command ()
 run = todo
@@ -153,13 +171,16 @@ commands = execWriter $ do
     command "llvm"   llvm
     command "asm"    asm
     command "obj"    obj
+    -- these have their own way to handle output
+    tell [("build", build)]
+    tell [("run",   run)]
 
 main :: IO ()
 main = runManaged $ do
     result <- (runExceptT . runCommand) $ do
         Arguments { command } <- arguments
         fromMaybe (throwError "Command not recognized!") (lookup command commands)
-    either (liftIO . hPutStr stderr) return result
+    either (liftIO . hPutStrLn stderr) return result
 
 class Output a where
     output :: Handle -> a -> IO ()
