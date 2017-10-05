@@ -9,15 +9,18 @@ import System.Environment (getArgs)
 import qualified System.Directory                          as Directory
 import qualified System.Exit                               as Exit
 import qualified System.Process                            as Process
+import qualified Foreign.Ptr                               as Ptr
 import qualified Data.ByteString                           as ByteString
 import qualified Data.Text.Prettyprint.Doc.Render.Terminal as Pretty
 
-import qualified LLVM.Analysis    as L
-import qualified LLVM.Context     as L
-import qualified LLVM.Module      as L
-import qualified LLVM.PassManager as L
-import qualified LLVM.Target      as L
-import qualified LLVM.Transforms  as L
+import qualified LLVM.Analysis        as L
+import qualified LLVM.Context         as L
+import qualified LLVM.ExecutionEngine as L
+import qualified LLVM.Module          as L
+--import qualified LLVM.OrcJIT          as L
+import qualified LLVM.PassManager     as L
+import qualified LLVM.Target          as L
+import qualified LLVM.Transforms      as L
 
 import qualified Token
 import qualified AST
@@ -101,8 +104,8 @@ ir = do
 llvmAst :: Command LLVM.Module
 llvmAst = liftM LLVM.translate ir
 
-llvmModule :: Command L.Module
-llvmModule = do
+llvmContextAndModule :: Command (L.Context, L.Module)
+llvmContextAndModule = do
     moduleAst <- llvmAst
     context   <- usingManaged L.withContext
     module'   <- usingManaged (L.withModuleFromAST context moduleAst)
@@ -111,7 +114,10 @@ llvmModule = do
         passManager <- usingManaged (L.withPassManager (L.PassSetSpec [L.PromoteMemoryToRegister] Nothing Nothing Nothing))
         _ <- liftIO (L.runPassManager passManager module')
         return ()
-    return module'
+    return (context, module')
+
+llvmModule :: Command L.Module
+llvmModule = liftM snd llvmContextAndModule
 
 llvm :: Command ByteString
 llvm = do
@@ -148,8 +154,39 @@ build = do
     when (exitCode != Exit.ExitSuccess) $ do
         throwError (stringToText ("GCC reported error:\n" ++ out ++ "\n" ++ err))
 
+{- OrcJIT version, fails to resolve `printf` symbol
+run :: Command Text
+run = do
+    let resolver :: L.MangledSymbol -> L.IRCompileLayer l -> L.MangledSymbol -> IO L.JITSymbol
+        resolver testFunc compileLayer symbol = L.findSymbol compileLayer symbol True
+        nullResolver :: L.MangledSymbol -> IO L.JITSymbol
+        nullResolver s = return (L.JITSymbol 0 (L.JITSymbolFlags False False))
+    module'      <- llvmModule
+    target       <- usingManaged L.withHostTargetMachine
+    objectLayer  <- usingManaged L.withObjectLinkingLayer
+    compileLayer <- usingManaged (L.withIRCompileLayer objectLayer target)
+    testFunc     <- liftIO (L.mangleSymbol compileLayer "main")
+    moduleSet    <- usingManaged (L.withModuleSet compileLayer [module'] (L.SymbolResolver (resolver testFunc compileLayer) nullResolver))
+    mainSymbol   <- liftIO (L.mangleSymbol compileLayer "main")
+    jitSymbol    <- liftIO (L.findSymbol compileLayer mainSymbol True)
+    result       <- (liftIO . runMainPtr . Ptr.castPtrToFunPtr . Ptr.wordPtrToPtr . L.jitSymbolAddress) jitSymbol
+    return ("EXIT CODE: " ++ showText result)
+-}
+
 run :: Command ()
-run = todo
+run = do
+    Arguments { outFile } <- arguments
+    when (isJust outFile) $ do
+        throwError "An output file doesn't make sense for the `run` command!"
+    (context, module') <- llvmContextAndModule
+    engine             <- usingManaged (L.withMCJIT context Nothing Nothing Nothing Nothing)
+    compiledModule     <- usingManaged (L.withModuleInEngine engine module')
+    maybeMain          <- liftIO (L.getFunction compiledModule "main")
+    mainPtr            <- maybe (throwError "ERROR: `main` not found in JIT-compiled code!") return maybeMain
+    result             <- (liftIO . runMainPtr . Ptr.castFunPtr) mainPtr
+    liftIO (putStrLn ("EXIT CODE: " ++ showText result))
+
+foreign import ccall "dynamic" runMainPtr :: Ptr.FunPtr (IO Int32) -> IO Int32
 
 outputCommand :: Output a => Command a -> Command ()
 outputCommand command = do
@@ -171,7 +208,7 @@ commands = execWriter $ do
     command "llvm"   llvm
     command "asm"    asm
     command "obj"    obj
-    -- these have their own way to handle output
+    -- these have their own ways to handle output
     tell [("build", build)]
     tell [("run",   run)]
 
