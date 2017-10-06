@@ -134,7 +134,7 @@ obj :: Command ByteString
 obj = do
     module' <- llvmModule
     target  <- usingManaged L.withHostTargetMachine
-    liftIO (L.moduleTargetAssembly target module')
+    liftIO (L.moduleObject target module')
 
 build :: Command ()
 build = do
