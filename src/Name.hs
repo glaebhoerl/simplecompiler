@@ -194,7 +194,7 @@ validate = runExcept . evalStateT [] . validateBlock where
             validateExpression expr
         AST.BinaryOperator expr1 _ expr2 -> do
             mapM_ validateExpression [expr1, expr2]
-        AST.Literal _ -> do
+        AST.NumberLiteral _ -> do
             return ()
         AST.Ask _ -> do
             return ()

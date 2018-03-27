@@ -135,7 +135,7 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
     AST.Named name -> do
         translatedName <- translateName name
         return (Named translatedName)
-    AST.Literal num -> do
+    AST.NumberLiteral num -> do
         let value = Literal (fromIntegral num)
         if isJust providedName
             then do
@@ -148,7 +148,7 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         name  <- emitNamedLet (UnaryOperator op value)
         return (Named name)
     -- Logical operators are short-circuiting, so we can't just emit them as simple statements, except when the RHS is already a Value.
-    AST.BinaryOperator expr1 (LogicalOperator op) expr2 | (expr2 `isn't` constructor @"Literal" && expr2 `isn't` constructor @"Named") -> do
+    AST.BinaryOperator expr1 (LogicalOperator op) expr2 | (expr2 `isn't` constructor @"NumberLiteral" && expr2 `isn't` constructor @"Named") -> do
         value1 <- translateTemporary expr1
         let opName = toLower (showText op)
         joinPoint <- currentContinuation ("join_" ++ opName) (Parameters [Bool]) -- TODO use the provided name for the arg!

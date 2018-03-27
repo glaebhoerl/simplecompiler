@@ -8,7 +8,7 @@ import qualified Token as T
 
 data Expression name
     = Named          !name
-    | Literal        !Integer
+    | NumberLiteral  !Integer
     | UnaryOperator  !UnaryOperator     !(Expression name)
     | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
     | Ask            !Text
@@ -63,7 +63,7 @@ eatNewlines = liftA1 (const ()) (zeroOrMore (E.token T.Newline))
 expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
     atom        <- ruleCases [liftA1 Named   (E.terminal (getWhen (constructor @"Name"))),
-                              liftA1 Literal (E.terminal (getWhen (constructor @"Number"))),
+                              liftA1 NumberLiteral (E.terminal (getWhen (constructor @"Number"))),
                               liftA1 Ask     (E.token (T.Name "ask") `followedBy` bracketed T.Round (E.terminal (getWhen (constructor @"Text")))),
                               bracketed T.Round logicals]
 

@@ -46,7 +46,7 @@ inferExpression :: TypeCheckM m => AST.Expression ResolvedName -> m Type
 inferExpression = \case
     AST.Named name -> do
         getTypeOfName name
-    AST.Literal int -> do
+    AST.NumberLiteral int -> do
         when (int > fromIntegral (maxBound :: Int64)) $ do
             reportError LiteralOutOfRange
         return Int
@@ -126,7 +126,7 @@ typeOf :: AST.Expression TypedName -> Type
 typeOf = \case
     AST.Named name ->
         Name.info name
-    AST.Literal _ ->
+    AST.NumberLiteral _ ->
         Int
     AST.UnaryOperator op _ ->
         case op of
@@ -192,7 +192,7 @@ validate = runExcept . validateBlock where
                     LogicalOperator    _ -> Bool
         AST.Named _ -> do
             return ()
-        AST.Literal _ -> do
+        AST.NumberLiteral _ -> do
             return ()
         AST.Ask _ -> do
             return ()
