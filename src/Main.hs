@@ -17,7 +17,7 @@ import qualified LLVM.Analysis        as L
 import qualified LLVM.Context         as L
 import qualified LLVM.ExecutionEngine as L
 import qualified LLVM.Module          as L
---import qualified LLVM.OrcJIT          as L
+import qualified LLVM.OrcJIT          as L
 import qualified LLVM.PassManager     as L
 import qualified LLVM.Target          as L
 import qualified LLVM.Transforms      as L
@@ -154,11 +154,11 @@ build = do
     when (exitCode != Exit.ExitSuccess) $ do
         throwError (stringToText ("GCC reported error:\n" ++ out ++ "\n" ++ err))
 
-{- OrcJIT version, fails to resolve `printf` symbol
-run :: Command Text
-run = do
+-- OrcJIT version, fails to resolve `printf` symbol
+runOrcJit :: Command Text
+runOrcJit = do
     let resolver :: L.MangledSymbol -> L.IRCompileLayer l -> L.MangledSymbol -> IO L.JITSymbol
-        resolver testFunc compileLayer symbol = L.findSymbol compileLayer symbol True
+        resolver _testFunc compileLayer symbol = L.findSymbol compileLayer symbol True
         nullResolver :: L.MangledSymbol -> IO L.JITSymbol
         nullResolver s = return (L.JITSymbol 0 (L.JITSymbolFlags False False))
     module'      <- llvmModule
@@ -166,12 +166,11 @@ run = do
     objectLayer  <- usingManaged L.withObjectLinkingLayer
     compileLayer <- usingManaged (L.withIRCompileLayer objectLayer target)
     testFunc     <- liftIO (L.mangleSymbol compileLayer "main")
-    moduleSet    <- usingManaged (L.withModuleSet compileLayer [module'] (L.SymbolResolver (resolver testFunc compileLayer) nullResolver))
+    --moduleSet    <- usingManaged (L.withModuleSet compileLayer [module'] (L.SymbolResolver (resolver testFunc compileLayer) nullResolver))
     mainSymbol   <- liftIO (L.mangleSymbol compileLayer "main")
     jitSymbol    <- liftIO (L.findSymbol compileLayer mainSymbol True)
     result       <- (liftIO . runMainPtr . Ptr.castPtrToFunPtr . Ptr.wordPtrToPtr . L.jitSymbolAddress) jitSymbol
     return ("EXIT CODE: " ++ showText result)
--}
 
 run :: Command ()
 run = do

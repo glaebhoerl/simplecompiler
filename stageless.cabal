@@ -99,7 +99,7 @@ executable stageless
                        profunctors,
                        tardis,
                        text
-  ghc-options:         -O -W -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+  ghc-options:         -O -W -Wall -Wcompat -Wincomplete-uni-patterns -Wincomplete-record-updates -Wredundant-constraints
 
 source-repository head
   type:     git

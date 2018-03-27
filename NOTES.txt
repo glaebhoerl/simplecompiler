@@ -158,6 +158,9 @@ BLAH
 
 CLI: optparse-applicative? there seem to be many options here!
   https://www.stackage.org/haddock/lts-9.0/optparse-generic-1.2.2/Options-Generic.html
+  http://hackage.haskell.org/package/cli-0.1.2/docs/Console-Options.html
+  http://hackage.haskell.org/package/optparse-applicative-simple
+  http://hackage.haskell.org/package/optparse-text
 
 LEXING: inchworm? (scanner, lexer-applicative?)
 
@@ -309,7 +312,7 @@ Being able to generate function pointers at runtime could also help with C FFI?
 
 coding conventions used:
  - avoid nonstandard binary operators
- - use $ only if necessary to orevent parentheses spanning multiple lines
+ - use $ only if necessary to prevent parentheses spanning multiple lines
  - do notation is Good
  - eschew function defns by multiple bindings: use \case instead (possible exception: needing to simultaneously match on multiple args)
  - only one unqualified-mass-import per module is allowed
@@ -450,5 +453,39 @@ otoh what's the point of translating the source program to globally unique names
 -}
 
 TODO
-  redundant ASTName lets
-  use normal logical ops when RHS is a value
+  make IDs follow each other in program order
+  implement breaks
+  implement astname-preservation for logical ops
+  keep let/var distinction in IR?
+  make `load`s from `var`s explicit? (simplifies translation to LLVM?)
+  do SSA conversion on the IR?
+  only ASTNames should become allocas!! temporaries can just become plain operands!
+  --
+  other optimization passes?
+  text-path-utf8 (safe-exceptions?)
+  parse operator chains as flat lists, resolve precedences in post-pass?
+
+
+Babby's First Compiler
+  why haskell and not rust
+  why first post - impostor?
+  Earley (how to pronounce?) + tokenizing = :(
+  Fortuity: parameterize over name -> class ResolveNamesIn -> Functor, Foldable, Traversable
+  always start trying to write as a function w/ recursion etc -- too painful, make a monad!
+  design of IR - ANF vs CPS, join points, scoping, SSA
+  Tardis monad debugging https://www.reddit.com/r/reflexfrp/comments/71q6lk/how_do_you_guys_find_accidental_infinite_loops_in/dnd4udc/
+  emitBlock :: m Transfer -> ...
+    vs. fall off into continuation (+ question about that), but doesn't work if there are arguments
+  thisBlock vs nextBlock question ("braiding")
+  tfw your IR has better highlighting than your editor :(
+    work on pretty printing just so I can tell whether the IR is correct
+  Fortuity: frontend in terms of abstract monadic interface -> can have tardis-based vs. two-pass backends
+  LLVM pass puzzlement: where should I use IR types, where LLVM ones?
+    e.g. in LLVM monad: all LLVM types
+  huge string literal code
+  Managed
+  what is the right name management library? what is the right command line args library?
+    who knows?
+    DON'T SOLVE A PAIN POINT BEFORE YOU HAVE ONE
+
+
