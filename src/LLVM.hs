@@ -87,6 +87,7 @@ translatedType :: IR.Type IR.Expression -> L.Type
 translatedType = \case
     IR.Bool -> i1
     IR.Int  -> i64
+    IR.Text -> ptr i8
 
 allocaForLet :: IR.Name IR.Expression -> Operand
 allocaForLet (IR.Name ident nameType _) = LocalReference (ptr (translatedType nameType)) (translatedID ident)
@@ -128,8 +129,11 @@ store name operand = do
 
 translateValue :: LLVM m => IR.Value -> m Operand
 translateValue = \case
-    IR.Literal value -> do
-        return (number (Bits 64) (fromIntegral value))
+    IR.Literal literal -> case literal of
+        IR.Number num -> do
+            return (number (Bits 64) (fromIntegral num))
+        IR.String text -> do
+            translateStringLiteral text
     IR.Named name -> do
         load name
 
@@ -177,10 +181,10 @@ translateExpression expr = let localRef = LocalReference (translatedType (IR.typ
         newName  <- freshName
         emit (newName := translateBinaryOp operand1 operand2 op)
         return (localRef newName)
-    IR.Ask text -> do
+    IR.Ask value -> do
+        operand     <- translateValue value
         printFormat <- translateStringLiteral "%s "
-        stringPtr   <- translateStringLiteral text
-        emit (Do (call printf [printFormat, stringPtr]))
+        emit (Do (call printf [printFormat, operand]))
 
         scanFormat  <- translateStringLiteral "%26lld"
         let instr = L.Alloca { -- TODO factor this out from `emitAlloca`
@@ -251,10 +255,10 @@ translateStatement = \case
     IR.Assign name value -> do
         operand <- translateValue value
         store name operand
-    IR.Say text -> do
+    IR.Say value -> do
         formatPtr <- translateStringLiteral "%s\n"
-        stringPtr <- translateStringLiteral text
-        emit (Do (call printf [formatPtr, stringPtr]))
+        operand   <- translateValue value
+        emit (Do (call printf [formatPtr, operand]))
     IR.Write value -> do
         formatPtr <- translateStringLiteral "%lld\n"
         operand   <- translateValue value

@@ -19,6 +19,7 @@ data Error
 data Type
     = Int
     | Bool
+    | Text
     deriving (Generic, Eq, Show)
 
 -- I think we won't really need the binding type or initializer expression after typechecking anyways?
@@ -50,6 +51,8 @@ inferExpression = \case
         when (int > fromIntegral (maxBound :: Int64)) $ do
             reportError LiteralOutOfRange
         return Int
+    AST.TextLiteral _ -> do
+        return Text
     AST.UnaryOperator op expr -> do
         let type' = case op of
                 Not    -> Bool
@@ -64,7 +67,8 @@ inferExpression = \case
         checkExpression inType expr1
         checkExpression inType expr2
         return outType
-    AST.Ask _ -> do
+    AST.Ask expr -> do
+        checkExpression Text expr
         return Int
 
 getTypeOfName :: TypeCheckM m => ResolvedName -> m Type
@@ -110,7 +114,8 @@ checkStatement = \case
     AST.Break -> do
         -- TODO we should check that we're in a loop!!
         return ()
-    AST.Say _ -> do
+    AST.Say expr -> do
+        checkExpression Text expr
         return ()
     AST.Write expr -> do
         checkExpression Int expr
@@ -128,6 +133,8 @@ typeOf = \case
         Name.info name
     AST.NumberLiteral _ ->
         Int
+    AST.TextLiteral _ ->
+        Text
     AST.UnaryOperator op _ ->
         case op of
             Not    -> Bool
@@ -174,8 +181,8 @@ validate = runExcept . validateBlock where
             mapM_ (check Int) maybeExpr
         AST.Break -> do
             return ()
-        AST.Say _ -> do
-            return ()
+        AST.Say expr -> do
+            check Text expr
         AST.Write expr -> do
             check Int expr
     validateExpression = \case
@@ -194,8 +201,10 @@ validate = runExcept . validateBlock where
             return ()
         AST.NumberLiteral _ -> do
             return ()
-        AST.Ask _ -> do
+        AST.TextLiteral _ -> do
             return ()
+        AST.Ask expr -> do
+            check Text expr
     check expectedType expr = do
         when (typeOf expr != expectedType) $ do
             throwError (ValidationError expr expectedType (typeOf expr))

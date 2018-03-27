@@ -183,8 +183,8 @@ validate = runExcept . evalStateT [] . validateBlock where
             mapM_ validateExpression maybeExpr
         AST.Break -> do
             return ()
-        AST.Say _ -> do
-            return ()
+        AST.Say expr -> do
+            validateExpression expr
         AST.Write expr -> do
             validateExpression expr
     validateExpression = \case
@@ -196,8 +196,10 @@ validate = runExcept . evalStateT [] . validateBlock where
             mapM_ validateExpression [expr1, expr2]
         AST.NumberLiteral _ -> do
             return ()
-        AST.Ask _ -> do
+        AST.TextLiteral _ -> do
             return ()
+        AST.Ask expr -> do
+            validateExpression expr
     validateName (NameWith name info1) = do
         context <- getState
         case Map.lookup name (Map.unions context) of

@@ -1,15 +1,18 @@
 var number = 1
 while number <= 100 {
-    let fizz = number % 3 == 0
-    let buzz = number % 5 == 0
-    if fizz && buzz {
-        say("FizzBuzz")
+    let fizz = "Fizz"
+    let buzz = "Buzz"
+    let fizzBuzz = "FizzBuzz"
+    let isFizz = number % 3 == 0
+    let isBuzz = number % 5 == 0
+    if isFizz && isBuzz {
+        say(fizzBuzz)
     } else {
-        if fizz {
-            say("Fizz")
+        if isFizz {
+            say(fizz)
         } else {
-            if buzz {
-                say("Buzz")
+            if isBuzz {
+                say(buzz)
             } else {
                 write(number)
             }

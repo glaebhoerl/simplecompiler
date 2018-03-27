@@ -9,9 +9,10 @@ import qualified Token as T
 data Expression name
     = Named          !name
     | NumberLiteral  !Integer
+    | TextLiteral    !Text
     | UnaryOperator  !UnaryOperator     !(Expression name)
     | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
-    | Ask            !Text
+    | Ask            !(Expression name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data BindingType
@@ -29,7 +30,7 @@ data Statement name
     | While      !(Expression name) !(Block name)
     | Return     !(Maybe (Expression name))
     | Break
-    | Say        !Text
+    | Say        !(Expression name)
     | Write      !(Expression name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
@@ -62,9 +63,10 @@ eatNewlines = liftA1 (const ()) (zeroOrMore (E.token T.Newline))
 -- TODO: eat newlines here too
 expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
-    atom        <- ruleCases [liftA1 Named   (E.terminal (getWhen (constructor @"Name"))),
+    atom        <- ruleCases [liftA1 Named         (E.terminal (getWhen (constructor @"Name"))),
                               liftA1 NumberLiteral (E.terminal (getWhen (constructor @"Number"))),
-                              liftA1 Ask     (E.token (T.Name "ask") `followedBy` bracketed T.Round (E.terminal (getWhen (constructor @"Text")))),
+                              liftA1 TextLiteral   (E.terminal (getWhen (constructor @"Text"))),
+                              liftA1 Ask           (E.token (T.Name "ask") `followedBy` bracketed T.Round logicals),
                               bracketed T.Round logicals]
 
     unary       <- ruleCases [liftA2 UnaryOperator (E.terminal (getWhen (constructor @"UnaryOperator")))
@@ -156,7 +158,7 @@ blockGrammar = mdo
     break <- E.rule $ do
         _ <- keyword T.K_break
         return Break
-    say   <- E.rule (liftA1 Say   (E.token (T.Name "say")   `followedBy` bracketed T.Round (E.terminal (getWhen (constructor @"Text")))))
+    say   <- E.rule (liftA1 Say   (E.token (T.Name "say")   `followedBy` bracketed T.Round expression))
     write <- E.rule (liftA1 Write (E.token (T.Name "write") `followedBy` bracketed T.Round expression))
     -----------------------------------------------------
     oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, say, write]

@@ -1,7 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-} -- for `idIsEven`
 
 module IR (
-    Type (..), ID (..), Name (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), paramTypes, returnToCaller, typeOf, translate,
+    Type (..), ID (..), Name (..), Literal (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), paramTypes, returnToCaller, typeOf, translate,
     ValidationError (..), validate, eliminateTrivialBlocks,
     Info (..), LiteralType (..), IdentInfo (..), IdentName (..), render,
     Style (..), Color (..), defaultStyle
@@ -22,6 +22,7 @@ import qualified Type as AST
 data Type node where
     Int        :: Type Expression
     Bool       :: Type Expression
+    Text       :: Type Expression
     Parameters :: ![Type Expression] -> Type Block
 
 paramTypes :: Type Block -> [Type Expression]
@@ -55,8 +56,13 @@ instance Ord (Name node) where
 returnToCaller :: Name Block
 returnToCaller = Name Return (Parameters [Int]) ""
 
+data Literal
+    = Number !Int64
+    | String !Text
+    deriving (Generic, Eq, Show)
+
 data Value
-    = Literal !Int64
+    = Literal !Literal
     | Named   !(Name Expression)
     deriving (Generic, Eq, Show)
 
@@ -64,14 +70,14 @@ data Expression
     = Value          !Value
     | UnaryOperator  !UnaryOperator !Value
     | BinaryOperator !Value !BinaryOperator !Value
-    | Ask            !Text
+    | Ask            !Value
     deriving (Generic, Eq, Show)
 
 data Statement
     = BlockDecl !(Name Block)      !Block
     | Let       !(Name Expression) !Expression
     | Assign    !(Name Expression) !Value
-    | Say       !Text
+    | Say       !Value
     | Write     !Value
     deriving (Generic, Eq, Show)
 
@@ -96,7 +102,9 @@ class TypeOf a where
 
 instance TypeOf Expression where
     typeOf = \case
-        Value (Literal _)        -> Int
+        Value (Literal literal)  -> case literal of
+            Number _             -> Int
+            String _             -> Text
         Value (Named name)       -> nameType name
         UnaryOperator Not      _ -> Bool
         UnaryOperator Negate   _ -> Int
@@ -136,7 +144,15 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         translatedName <- translateName name
         return (Named translatedName)
     AST.NumberLiteral num -> do
-        let value = Literal (fromIntegral num)
+        let value = Literal (Number (fromIntegral num))
+        if isJust providedName
+            then do
+                name <- emitNamedLet (Value value)
+                return (Named name)
+            else do
+                return value
+    AST.TextLiteral text -> do -- TODO refactor
+        let value = Literal (String text)
         if isJust providedName
             then do
                 name <- emitNamedLet (Value value)
@@ -166,8 +182,9 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         value2 <- translateTemporary expr2
         name   <- emitNamedLet (BinaryOperator value1 op value2)
         return (Named name)
-    AST.Ask text -> do
-        name <- emitNamedLet (Ask text)
+    AST.Ask expr -> do
+        value <- translateTemporary expr
+        name  <- emitNamedLet (Ask value)
         return (Named name)
 
 translateStatement :: TranslateM m => AST.Statement AST.TypedName -> m ()
@@ -214,11 +231,12 @@ translateStatement = \case
         emitTransfer (Jump (Target whileBlock []))
     AST.Return maybeExpr -> do
         maybeValue <- mapM translateTemporary maybeExpr
-        emitTransfer (Jump (Target returnToCaller [fromMaybe (Literal 0) maybeValue]))
+        emitTransfer (Jump (Target returnToCaller [fromMaybe (Literal (Number 0)) maybeValue]))
     AST.Break -> do
         todo -- TODO
-    AST.Say text -> do
-        emitStatement (Say text)
+    AST.Say expr -> do
+        value <- translateTemporary expr
+        emitStatement (Say value)
     AST.Write expr -> do
         value <- translateTemporary expr
         emitStatement (Write value)
@@ -239,7 +257,7 @@ translate = evalTardis (backwardsState, forwardsState) . runTranslate . translat
         translateRootBlock rootBlock = do
             (blockID, _, finishedBlock) <- liftM assert (backGetM (field @"thisBlock"))
             translateBlock rootBlock
-            emitTransfer (Jump (Target returnToCaller [Literal 0]))
+            emitTransfer (Jump (Target returnToCaller [Literal (Number 0)]))
             --assertM (blockID == ID 0) -- this results in a <<loop>>
             return finishedBlock
 
@@ -313,6 +331,7 @@ instance TranslateM Translate where
         where translatedType = \case
                 AST.Bool -> Bool
                 AST.Int  -> Int
+                AST.Text -> Text
 
     emitStatement :: Statement -> Translate ()
     emitStatement statement = do
@@ -474,8 +493,8 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
         Assign name value -> do
             checkID name
             checkValue (nameType name) value
-        Say _ -> do
-            return ()
+        Say value -> do
+            checkValue Text value
         Write value -> do
             checkValue Int value
     checkExpression expectedType expr = do
@@ -493,8 +512,8 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
                         ArithmeticOperator _ -> Int
                         ComparisonOperator _ -> Int
                         LogicalOperator    _ -> Bool
-            Ask _ -> do
-                return ()
+            Ask value -> do
+                checkValue Text value
     checkValue expectedType value = do
         checkType expectedType (Value value)
         case value of
@@ -629,7 +648,7 @@ render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
         BlockDecl name block -> keyword "block"  ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
         Let       name expr  -> keyword "let"    ++ " " ++ typedName name ++ " " ++ defineEquals ++ " " ++ renderExpr expr
         Assign    name value -> letID False name ++ " " ++ assignEquals ++ " " ++ renderValue value
-        Say       text       -> builtin "say"    ++ parens (string text)
+        Say       value      -> builtin "say"    ++ parens (renderValue value)
         Write     value      -> builtin "write"  ++ parens (renderValue value)
 
     renderTransfer = \case
@@ -642,11 +661,15 @@ render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
         Value          value            -> renderValue value
         UnaryOperator  op value         -> unaryOperator op ++ renderValue value
         BinaryOperator value1 op value2 -> renderValue value1 ++ " " ++ binaryOperator op ++ " " ++ renderValue value2
-        Ask            text             -> builtin "ask" ++ parens (string text)
+        Ask            value            -> builtin "ask" ++ parens (renderValue value)
 
     renderValue = \case
-        Named   name -> letID False name
-        Literal num  -> number num
+        Named   name    -> letID False name
+        Literal literal -> renderLiteral literal
+
+    renderLiteral = \case
+        Number  num  -> number num
+        String  text -> string text
 
     renderName :: IdentInfo -> Doc Info
     renderName info = note (Sigil info) sigil ++ note (Identifier info) name where
