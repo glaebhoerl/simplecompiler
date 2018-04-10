@@ -1,4 +1,4 @@
-module Type (Type (..), TypedName, Error (..), checkTypes, typeOf, ValidationError (..), validate) where
+module Type (Type (..), TypedName, Error (..), TypeMismatch (..), checkTypes, typeOf, ValidationError, validate) where
 
 import MyPrelude
 
@@ -11,10 +11,16 @@ import Name (Name, NameWith (NameWith), ResolvedName)
 
 -- TODO more info in here
 data Error
-    = TypeMismatch
+    = TypeError (TypeMismatch (AST.Expression ResolvedName))
     | AssignToLet
     | LiteralOutOfRange
     deriving (Generic, Show)
+
+data TypeMismatch node = TypeMismatch {
+    expectedType :: Type,
+    actualType   :: Type,
+    expression   :: node
+} deriving (Generic, Show)
 
 data Type
     = Int
@@ -85,7 +91,11 @@ checkExpression :: TypeCheckM m => Type -> AST.Expression ResolvedName -> m ()
 checkExpression expected expr = do
     inferred <- inferExpression expr
     when (expected != inferred) $ do
-        reportError TypeMismatch
+        reportError $ TypeError TypeMismatch {
+            expectedType = expected,
+            actualType   = inferred,
+            expression   = expr
+        }
 
 checkStatement :: TypeCheckM m => AST.Statement ResolvedName -> m ()
 checkStatement = \case
@@ -147,11 +157,7 @@ typeOf = \case
     AST.Ask _ ->
         Int
 
-data ValidationError = ValidationError {
-    expression   :: AST.Expression TypedName,
-    expectedType :: Type,
-    actualType   :: Type
-} deriving (Generic, Show)
+type ValidationError = TypeMismatch (AST.Expression TypedName)
 
 -- This checks that:
 --  * The AST is locally well-typed at each point, based on the types stored within `Name`s.
@@ -207,5 +213,5 @@ validate = runExcept . validateBlock where
             check Text expr
     check expectedType expr = do
         when (typeOf expr != expectedType) $ do
-            throwError (ValidationError expr expectedType (typeOf expr))
+            throwError (TypeMismatch expectedType (typeOf expr) expr)
         validateExpression expr
