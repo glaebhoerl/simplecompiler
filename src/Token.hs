@@ -106,6 +106,7 @@ data Token
     | Text           !Text
     | EqualsSign
     | Comma
+    | Colon
     | Semicolon
     | Newline
     deriving (Generic, Eq, Show)
@@ -121,6 +122,7 @@ instance TextRepresentation Token where
         Text           text'   -> toText text'
         EqualsSign             -> "="
         Comma                  -> ","
+        Colon                  -> ":"
         Semicolon              -> ";"
         Newline                -> "\n"
 
@@ -191,6 +193,7 @@ tokens = mdo
         match Bracket',
         whitespaced (literal EqualsSign),
         literal Comma,
+        literal Colon,
         literal Semicolon,
         literal Newline,
         liftA1 Text text]))
