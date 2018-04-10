@@ -59,51 +59,58 @@ followedBy = (*>)
 eatNewlines :: Prod r ()
 eatNewlines = liftA1 (const ()) (zeroOrMore (E.token T.Newline))
 
--- TODO: I should specify the precedence levels declaratively somehow and figure out how to generate the grammar from that
+-- from tightest to loosest; operators within a group have equal precedence
+precedenceGroups :: [[BinaryOperator]]
+precedenceGroups = assert (justIf isWellFormed listOfGroups) where
+    isWellFormed = all exactly1 (enumerate :: [BinaryOperator]) && not (any null listOfGroups)
+    exactly1 op  = length (filter (== op) (concat listOfGroups)) == 1
+    listOfGroups =
+        [map ArithmeticOperator [Mul, Div, Mod],
+         map ArithmeticOperator [Add, Sub],
+         map ComparisonOperator [Less, LessEqual, Greater, GreaterEqual],
+         map ComparisonOperator [Equal, NotEqual],
+         map LogicalOperator    [And],
+         map LogicalOperator    [Or]]
+
+data BinaryOperationList
+    = Expression (Expression Text)
+    | BinaryOperation (Expression Text) BinaryOperator BinaryOperationList
+    deriving Show
+
+resolvePrecedences :: BinaryOperationList -> Expression Text
+resolvePrecedences binaryOperationList = finalResult where
+    finalResult = case allPrecedencesResolved of
+        Expression expr -> expr
+        list            -> bug ("Unresolved binary operator precedence: " ++ prettyShow list)
+    allPrecedencesResolved = foldl' resolveOnePrecedenceLevel binaryOperationList precedenceGroups
+    resolveOnePrecedenceLevel binOpList precedenceGroup = case binOpList of
+        BinaryOperation expr1 op1 (BinaryOperation expr2 op2 rest)
+            | elem op1 precedenceGroup -> resolveOnePrecedenceLevel (BinaryOperation (BinaryOperator expr1 op1 expr2) op2 rest) precedenceGroup
+            | otherwise                -> BinaryOperation expr1 op1 (resolveOnePrecedenceLevel (BinaryOperation expr2 op2 rest) precedenceGroup)
+        BinaryOperation expr1 op (Expression expr2)
+            | elem op  precedenceGroup -> Expression (BinaryOperator expr1 op expr2)
+        other -> other
+
 -- TODO: eat newlines here too
 expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
-    atom        <- ruleCases [liftA1 Named         (E.terminal (getWhen (constructor @"Name"))),
-                              liftA1 NumberLiteral (E.terminal (getWhen (constructor @"Number"))),
-                              liftA1 TextLiteral   (E.terminal (getWhen (constructor @"Text"))),
-                              liftA1 Ask           (E.token (T.Name "ask") `followedBy` bracketed T.Round logicals),
-                              bracketed T.Round logicals]
+    atom     <- ruleCases [liftA1 Named         (E.terminal (getWhen (constructor @"Name"))),
+                           liftA1 NumberLiteral (E.terminal (getWhen (constructor @"Number"))),
+                           liftA1 TextLiteral   (E.terminal (getWhen (constructor @"Text"))),
+                           liftA1 Ask           (E.token (T.Name "ask") `followedBy` bracketed T.Round expression),
+                           bracketed T.Round expression]
 
-    unary       <- ruleCases [liftA2 UnaryOperator (E.terminal (getWhen (constructor @"UnaryOperator")))
-                                     atom,
-                              atom]
+    unary    <- ruleCases [liftA2 UnaryOperator (E.terminal (getWhen (constructor @"UnaryOperator"))) atom,
+                           atom]
 
-    mulDivMod   <- ruleCases [liftA3 BinaryOperator
-                                     mulDivMod
-                                     -- TODO prism?
-                                     (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Mul, Div, Mod] -> Just binop; _ -> Nothing))
-                                     unary,
-                              unary]
+    binaries <- ruleCases [liftA3 BinaryOperation unary (E.terminal (getWhen (constructor @"BinaryOperator"))) binaries,
+                           liftA1 Expression unary]
 
-    arithmetic  <- ruleCases [liftA3 BinaryOperator
-                                     arithmetic
-                                     -- TODO prism?
-                                     (E.terminal (\case T.BinaryOperator binop@(ArithmeticOperator op) | op `elem` [Add, Sub] -> Just binop; _ -> Nothing))
-                                     mulDivMod,
-                              mulDivMod]
+    let expression = fmap resolvePrecedences binaries
 
-    comparisons <- ruleCases [liftA3 BinaryOperator
-                                     comparisons
-                                     -- TODO prism?
-                                     (E.terminal (\case T.BinaryOperator binop@ComparisonOperator{} -> Just binop; _ -> Nothing))
-                                     arithmetic,
-                              arithmetic]
+    return expression
 
-    -- FIXME we should give && higher precedence than ||, or require parentheses to disambiguate
-    logicals    <- ruleCases [liftA3 BinaryOperator
-                                     logicals
-                                     -- TODO prism?
-                                     (E.terminal (\case T.BinaryOperator binop@LogicalOperator{} -> Just binop; _ -> Nothing))
-                                     comparisons,
-                              comparisons]
-    return logicals
-
--- FIXME: this newline eating is ugly as fuck, how can I do something better?
+-- FIXME: this newline eating is ugly as fuck, how can I do something better?z
 blockGrammar :: Grammar r (Block Text)
 blockGrammar = mdo
     expression <- expressionGrammar
