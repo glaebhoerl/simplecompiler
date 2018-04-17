@@ -10,6 +10,8 @@ import qualified Name
 import Name (Name, NameWith (NameWith), ResolvedName)
 
 -- TODO more info in here
+-- such as the context
+-- wonder how to formulate that...
 data Error
     = TypeError (TypeMismatch (AST.Expression ResolvedName))
     | AssignToLet

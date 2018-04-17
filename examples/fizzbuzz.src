@@ -1,22 +1,22 @@
-var number = 1
+var number = 1;
 while number <= 100 {
-    let fizz = "Fizz"
-    let buzz = "Buzz"
-    let fizzBuzz = "FizzBuzz"
-    let isFizz = number % 3 == 0
-    let isBuzz = number % 5 == 0
+    let fizz = "Fizz";
+    let buzz = "Buzz";
+    let fizzBuzz = "FizzBuzz";
+    let isFizz = number % 3 == 0;
+    let isBuzz = number % 5 == 0;
     if isFizz && isBuzz {
-        say(fizzBuzz)
+        say(fizzBuzz);
     } else {
         if isFizz {
-            say(fizz)
+            say(fizz);
         } else {
             if isBuzz {
-                say(buzz)
+                say(buzz);
             } else {
-                write(number)
+                write(number);
             }
         }
     }
-    number = number + 1
+    number = number + 1;
 }

@@ -108,7 +108,6 @@ data Token
     | Comma
     | Colon
     | Semicolon
-    | Newline
     deriving (Generic, Eq, Show)
 
 instance TextRepresentation Token where
@@ -124,7 +123,6 @@ instance TextRepresentation Token where
         Comma                  -> ","
         Colon                  -> ":"
         Semicolon              -> ";"
-        Newline                -> "\n"
 
 type Expected = Text
 
@@ -185,7 +183,7 @@ text = do
 -- unary negation is ambiguous with both negative literals and binary negation :(
 tokens :: Grammar r [Token]
 tokens = mdo
-    spaces     <- E.rule (liftA1 (const []) (oneOrMore (E.token ' ')))
+    spaces     <- E.rule (liftA1 (const []) (oneOrMore (oneOf [E.token ' ', E.token '\n'])))
     stringlike <- E.rule (liftA1 single (oneOf [liftA1 nameOrKeyword name, liftA1 Number number]))
     fixed      <- E.rule (liftA1 single (oneOf
         [whitespaced (match BinaryOperator),
@@ -195,7 +193,6 @@ tokens = mdo
         literal Comma,
         literal Colon,
         literal Semicolon,
-        literal Newline,
         liftA1 Text text]))
     spacesRec     <- E.rule (oneOf [spaces,     liftA2 (++) spaces     stringlikeRec, liftA2 (++) spaces     fixedRec])
     stringlikeRec <- E.rule (oneOf [stringlike, liftA2 (++) stringlike fixedRec,      liftA2 (++) stringlike spacesRec])

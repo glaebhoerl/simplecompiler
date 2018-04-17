@@ -1,17 +1,17 @@
-var number = 1
+var number = 1;
 while number <= 100 {
     if number % 3 == 0 && number % 5 == 0 {
-        say("FizzBuzz")
+        say("FizzBuzz");
     } else {
         if number % 3 == 0 {
-            say("Fizz")
+            say("Fizz");
         } else {
             if number % 5 == 0 {
-                say("Buzz")
+                say("Buzz");
             } else {
-                write(number)
+                write(number);
             }
         }
     }
-    number = number + 1
+    number = number + 1;
 }

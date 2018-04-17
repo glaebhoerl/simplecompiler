@@ -1,10 +1,10 @@
-var n = 0
+var n = 0;
 forever {
-    say("Running total:")
-    write(n)
-    let m = ask("Number to add:")
+    say("Running total:");
+    write(n);
+    let m = ask("Number to add:");
     if m == 0 {
-        return
+        return;
     }
-    n = n + m
+    n = n + m;
 }

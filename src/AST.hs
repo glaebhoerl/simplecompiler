@@ -56,9 +56,6 @@ ruleCases cases = E.rule (oneOf cases)
 followedBy :: Applicative f => f a -> f b -> f b
 followedBy = (*>)
 
-eatNewlines :: Prod r ()
-eatNewlines = liftA1 (const ()) (zeroOrMore (E.token T.Newline))
-
 -- from tightest to loosest; operators within a group have equal precedence
 precedenceGroups :: [[BinaryOperator]]
 precedenceGroups = assert (justIf isWellFormed listOfGroups) where
@@ -91,7 +88,6 @@ resolvePrecedences binaryOperationList = finalResult where
             | elem op  precedenceGroup -> Expression (BinaryOperator expr1 op expr2)
         other -> other
 
--- TODO: eat newlines here too
 expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
     atom     <- ruleCases [liftA1 Named         (E.terminal (getWhen (constructor @"Name"))),
@@ -110,7 +106,6 @@ expressionGrammar = mdo
 
     return expression
 
--- FIXME: this newline eating is ugly as fuck, how can I do something better?z
 blockGrammar :: Grammar r (Block Text)
 blockGrammar = mdo
     expression <- expressionGrammar
@@ -118,68 +113,66 @@ blockGrammar = mdo
     -----------------------------------------------------------
     binding <- E.rule $ do
         letvar <- E.terminal (\case T.Keyword T.K_let -> Just Let; T.Keyword T.K_var -> Just Var; _ -> Nothing) -- TODO prism?
-        _      <- eatNewlines
         name   <- E.terminal (getWhen (constructor @"Name"))
-        _      <- eatNewlines
         _      <- E.token T.EqualsSign
-        _      <- eatNewlines
         rhs    <- expression
+        _      <- E.token T.Semicolon
         return (Binding letvar name rhs)
     assign <- E.rule $ do
         lhs <- E.terminal (getWhen (constructor @"Name"))
-        _   <- eatNewlines
         _   <- E.token T.EqualsSign
-        _   <- eatNewlines
         rhs <- expression
+        _   <- E.token T.Semicolon
         return (Assign lhs rhs)
     ifthen <- E.rule $ do
         _    <- keyword T.K_if
-        _    <- eatNewlines
         cond <- expression
-        _    <- eatNewlines
         body <- block
         return (IfThen cond body)
     ifthenelse <- E.rule $ do
         (IfThen cond body1) <- ifthen -- HACK
-        _     <- eatNewlines
         _     <- keyword T.K_else
-        _     <- eatNewlines
         body2 <- block
         return (IfThenElse cond body1 body2)
     forever <- E.rule $ do
         _    <- keyword T.K_forever
-        _    <- eatNewlines
         body <- block
         return (Forever body)
     while <- E.rule $ do
         _    <- keyword T.K_while
-        _    <- eatNewlines
         cond <- expression
-        _    <- eatNewlines
         body <- block
         return (While cond body)
     ret <- E.rule $ do
         _   <- keyword T.K_return
-        arg <- liftA1 head (zeroOrOne (eatNewlines `followedBy` expression))
+        arg <- liftA1 head (zeroOrOne expression)
+        _   <- E.token T.Semicolon
         return (Return arg)
     break <- E.rule $ do
         _ <- keyword T.K_break
+        _ <- E.token T.Semicolon
         return Break
-    say   <- E.rule (liftA1 Say   (E.token (T.Name "say")   `followedBy` bracketed T.Round expression))
-    write <- E.rule (liftA1 Write (E.token (T.Name "write") `followedBy` bracketed T.Round expression))
+    say <- E.rule $ do
+        _    <- E.token (T.Name "say")
+        expr <- bracketed T.Round expression
+        _    <- E.token T.Semicolon
+        return (Say expr)
+    write <- E.rule $ do
+        _    <- E.token (T.Name "write")
+        expr <- bracketed T.Round expression
+        _    <- E.token T.Semicolon
+        return (Write expr)
     -----------------------------------------------------
     oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, say, write]
     moreStatements <- E.rule $ do
         first <- oneStatement
-        _     <- oneOrMore (oneOf [E.token T.Semicolon, E.token T.Newline])
+        --_     <- oneOrMore (E.token T.Semicolon)
         rest  <- oneOrMoreStatements
         return (first : rest)
     oneOrMoreStatements <- E.rule (oneOf [liftA1 single oneStatement, moreStatements])
     -- FIXME: this doesn't accept empty blocks but rn idgaf
     statements <- E.rule $ do
-        _ <- eatNewlines
         s <- oneOrMoreStatements
-        _ <- eatNewlines
         return s
     block <- E.rule (liftA1 Block (bracketed T.Curly statements))
     return (liftA1 Block statements)
