@@ -2,16 +2,14 @@
 
 module IR (
     Type (..), ID (..), Name (..), Literal (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), paramTypes, returnToCaller, typeOf, translate,
-    ValidationError (..), validate, eliminateTrivialBlocks,
-    Info (..), LiteralType (..), IdentInfo (..), IdentName (..), render,
-    Style (..), Color (..), defaultStyle
+    ValidationError (..), validate, eliminateTrivialBlocks
 ) where
 
 import MyPrelude
 
-import qualified Data.Map.Strict           as Map
-import qualified Data.Text.Prettyprint.Doc as P
+import qualified Data.Map as Map
 
+import qualified Pretty
 import qualified AST  as AST
 import qualified Name as AST
 import qualified Type as AST
@@ -591,33 +589,9 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
 
 ---------------------------------------------------------------------------------------------------- PRETTY PRINTING
 
--- TODO bikeshed the names of all these things
+instance Pretty.DefaultStyle (Type Expression) where
+    applyStyle base = const base
 
-data Info
-    = Keyword
-    | Brace
-    | Paren
-    | DefineEquals
-    | AssignEquals
-    | Colon
-    | UserOperator
-    | Literal'   !LiteralType
-    | Sigil      !IdentInfo
-    | Identifier !IdentInfo
-    deriving (Generic, Eq, Show)
-
-data LiteralType
-    = NumberLiteral
-    | BoolLiteral
-    | StringLiteral
-    deriving (Generic, Eq, Show)
-
-data IdentInfo = IdentInfo {
-    isDefinition :: !Bool,
-    identName    :: !IdentName
-} deriving (Generic, Eq, Show)
-
--- TODO maybe we should replace everything with plain `Text`s, so we can share definitions w/ an AST pretty printer?
 data IdentName
     = LetName    !(Name Expression)
     | BlockName  !(Name Block)
@@ -625,130 +599,99 @@ data IdentName
     | GlobalName !Text
     deriving (Generic, Eq, Show)
 
-render :: Block -> Doc Info
-render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
-    note         = P.annotate
-    keyword      = note Keyword
-    operator     = note UserOperator
-    colon        = note Colon ":"
-    defineEquals = note DefineEquals "="
-    assignEquals = note AssignEquals "="
-    string       = note (Literal' StringLiteral) . P.dquotes . P.pretty
-    number       = note (Literal' NumberLiteral) . P.pretty
-    builtin      = renderName . IdentInfo False . GlobalName
-    type'        = renderName . IdentInfo False . TypeName
-    blockID def  = renderName . IdentInfo def   . BlockName
-    letID   def  = renderName . IdentInfo def   . LetName
-    braces  doc  = note Brace "{" ++ doc ++ note Brace "}"
-    parens  doc  = note Paren "(" ++ doc ++ note Paren ")"
+instance Pretty.DefaultStyle IdentName where
+    applyStyle base = \case
+        LetName    _ -> base { Pretty.color = Just Pretty.Magenta }
+        BlockName  _ -> base { Pretty.color = Just Pretty.Green   }
+        TypeName   _ -> base { Pretty.color = Just Pretty.Cyan    }
+        GlobalName _ -> base { Pretty.color = Just Pretty.Yellow  }
 
-    renderBody statements transfer = mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
+instance Pretty.Render Block where
+    type InfoFor Block = Pretty.Info (Type Expression) IdentName
+    render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
+        note         = Pretty.annotate
+        keyword      = note Pretty.Keyword
+        operator     = note Pretty.UserOperator
+        colon        = note Pretty.Colon ":"
+        defineEquals = note Pretty.DefineEquals "="
+        assignEquals = note Pretty.AssignEquals "="
+        string       = note (Pretty.Literal' Text) . Pretty.dquotes . Pretty.pretty
+        number       = note (Pretty.Literal' Int) . Pretty.pretty
+        builtin      = renderName . Pretty.IdentInfo False . GlobalName
+        type'        = renderName . Pretty.IdentInfo False . TypeName
+        blockID def  = renderName . Pretty.IdentInfo def   . BlockName
+        letID   def  = renderName . Pretty.IdentInfo def   . LetName
+        braces  doc  = note Pretty.Brace "{" ++ doc ++ note Pretty.Brace "}"
+        parens  doc  = note Pretty.Paren "(" ++ doc ++ note Pretty.Paren ")"
 
-    renderStatement = \case
-        BlockDecl name block -> keyword "block"  ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
-        Let       name expr  -> keyword "let"    ++ " " ++ typedName name ++ " " ++ defineEquals ++ " " ++ renderExpr expr
-        Assign    name value -> letID False name ++ " " ++ assignEquals ++ " " ++ renderValue value
-        Say       value      -> builtin "say"    ++ parens (renderValue value)
-        Write     value      -> builtin "write"  ++ parens (renderValue value)
+        renderBody statements transfer = mconcat (map (Pretty.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
 
-    renderTransfer = \case
-        Jump         target  -> keyword "jump"   ++ " " ++ renderTarget target
-        Branch value targets -> keyword "branch" ++ " " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
+        renderStatement = \case
+            BlockDecl name block -> keyword "block"  ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ braces (Pretty.nest 4 (renderBody (body block) (transfer block)) ++ Pretty.hardline)
+            Let       name expr  -> keyword "let"    ++ " " ++ typedName name ++ " " ++ defineEquals ++ " " ++ renderExpr expr
+            Assign    name value -> letID False name ++ " " ++ assignEquals ++ " " ++ renderValue value
+            Say       value      -> builtin "say"    ++ parens (renderValue value)
+            Write     value      -> builtin "write"  ++ parens (renderValue value)
 
-    renderTarget target = blockID False (targetBlock target) ++ parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+        renderTransfer = \case
+            Jump         target  -> keyword "jump"   ++ " " ++ renderTarget target
+            Branch value targets -> keyword "branch" ++ " " ++ renderValue value ++ " " ++ Pretty.hsep (map renderTarget targets)
 
-    renderExpr = \case
-        Value          value            -> renderValue value
-        UnaryOperator  op value         -> unaryOperator op ++ renderValue value
-        BinaryOperator value1 op value2 -> renderValue value1 ++ " " ++ binaryOperator op ++ " " ++ renderValue value2
-        Ask            value            -> builtin "ask" ++ parens (renderValue value)
+        renderTarget target = blockID False (targetBlock target) ++ parens (Pretty.hsep (Pretty.punctuate "," (map renderValue (targetArgs target))))
 
-    renderValue = \case
-        Named   name    -> letID False name
-        Literal literal -> renderLiteral literal
+        renderExpr = \case
+            Value          value            -> renderValue value
+            UnaryOperator  op value         -> unaryOperator op ++ renderValue value
+            BinaryOperator value1 op value2 -> renderValue value1 ++ " " ++ binaryOperator op ++ " " ++ renderValue value2
+            Ask            value            -> builtin "ask" ++ parens (renderValue value)
 
-    renderLiteral = \case
-        Number  num  -> number num
-        String  text -> string text
+        renderValue = \case
+            Named   name    -> letID False name
+            Literal literal -> renderLiteral literal
 
-    renderName :: IdentInfo -> Doc Info
-    renderName info = note (Sigil info) sigil ++ note (Identifier info) name where
-        (sigil, name) = case identName info of
-            LetName    n -> ("$", renderIdent (ident n))
-            BlockName  n -> ("%", renderIdent (ident n) ++ (if description n == "" then "" else "_" ++ P.pretty (description n)))
-            TypeName   t -> ("",  P.pretty (show t))
-            GlobalName n -> ("",  P.pretty n)
+        renderLiteral = \case
+            Number  num  -> number num
+            String  text -> string text
 
-    renderIdent :: ID node -> Doc Info
-    renderIdent = \case
-        ASTName n -> P.pretty (AST.givenName n)
-        LetID   i -> P.pretty i
-        BlockID i -> P.pretty i
-        Return    -> keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
+        renderName :: (Pretty.IdentInfo IdentName) -> Doc (Pretty.InfoFor Block)
+        renderName info = note (Pretty.Sigil info) sigil ++ note (Pretty.Identifier info) name where
+            (sigil, name) = case Pretty.identName info of
+                LetName    n -> ("$", renderIdent (ident n))
+                BlockName  n -> ("%", renderIdent (ident n) ++ (if description n == "" then "" else "_" ++ Pretty.pretty (description n)))
+                TypeName   t -> ("",  Pretty.pretty (show t))
+                GlobalName n -> ("",  Pretty.pretty n)
 
-    argumentList args = parens (P.hsep (P.punctuate "," (map typedName args)))
+        renderIdent :: ID node -> Doc (Pretty.InfoFor Block)
+        renderIdent = \case
+            ASTName n -> Pretty.pretty (AST.givenName n)
+            LetID   i -> Pretty.pretty i
+            BlockID i -> Pretty.pretty i
+            Return    -> keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
 
-    typedName name = letID True name ++ colon ++ " " ++ type' (nameType name)
+        argumentList args = parens (Pretty.hsep (Pretty.punctuate "," (map typedName args)))
 
-    -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
-    unaryOperator  = operator . \case
-        Not                   -> "!"
-        Negate                -> "-"
-    binaryOperator = operator . \case
-        ArithmeticOperator op -> case op of
-            Add               -> "+"
-            Sub               -> "-"
-            Mul               -> "*"
-            Div               -> "/"
-            Mod               -> "%"
-        ComparisonOperator op -> case op of
-            Equal             -> "=="
-            NotEqual          -> "!="
-            Less              -> "<"
-            LessEqual         -> "<="
-            Greater           -> ">"
-            GreaterEqual      -> ">="
-        LogicalOperator    op -> case op of
-            And               -> "&&"
-            Or                -> "||"
+        typedName name = letID True name ++ colon ++ " " ++ type' (nameType name)
 
-data Style = Style {
-    color        :: !(Maybe Color),
-    isDull       :: !Bool,
-    isBold       :: !Bool,
-    isItalic     :: !Bool,
-    isUnderlined :: !Bool
-} deriving (Generic, Eq, Show)
+        -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
+        unaryOperator  = operator . \case
+            Not                   -> "!"
+            Negate                -> "-"
+        binaryOperator = operator . \case
+            ArithmeticOperator op -> case op of
+                Add               -> "+"
+                Sub               -> "-"
+                Mul               -> "*"
+                Div               -> "/"
+                Mod               -> "%"
+            ComparisonOperator op -> case op of
+                Equal             -> "=="
+                NotEqual          -> "!="
+                Less              -> "<"
+                LessEqual         -> "<="
+                Greater           -> ">"
+                GreaterEqual      -> ">="
+            LogicalOperator    op -> case op of
+                And               -> "&&"
+                Or                -> "||"
 
-data Color
-    = Black
-    | White
-    | Red
-    | Green
-    | Blue
-    | Cyan
-    | Magenta
-    | Yellow
-    deriving (Generic, Eq, Show)
-
-defaultStyle :: Info -> Style
-defaultStyle = \case
-    Keyword          -> plain { isBold = True }
-    Brace            -> plain { isBold = True }
-    Paren            -> plain
-    DefineEquals     -> plain { isBold = True }
-    AssignEquals     -> plain { color  = Just Yellow }
-    Colon            -> plain { isBold = True }
-    UserOperator     -> plain { color  = Just Yellow }
-    Literal'   _     -> plain { color  = Just Red }
-    Sigil      info  -> plain { isUnderlined = isDefinition info }
-                                --color = nameColor (identName info) }
-    Identifier info  -> plain { isUnderlined = isDefinition info,
-                                color        = nameColor (identName info) }
-    where
-        plain = Style Nothing False False False False
-        nameColor = \case
-            LetName    _ -> Just Magenta
-            BlockName  _ -> Just Green
-            TypeName   _ -> Just Cyan
-            GlobalName _ -> Just Yellow
+instance Pretty.Output Block

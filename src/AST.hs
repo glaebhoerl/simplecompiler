@@ -4,6 +4,7 @@ import MyPrelude
 
 import qualified Text.Earley as E
 
+import qualified Pretty
 import qualified Token as T
 
 data Expression name
@@ -178,6 +179,9 @@ blockGrammar = mdo
     return (liftA1 Block statements)
 
 type AST = Block
+
+instance Show name => Pretty.Output (Block name) where
+    output = Pretty.outputShow
 
 data Error
     = Invalid   !Int ![Expected] ![T.Token]

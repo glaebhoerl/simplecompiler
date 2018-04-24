@@ -24,12 +24,16 @@ import LLVM.AST          (Module, Definition, Global, Parameter (Parameter), Bas
 import LLVM.AST.Constant (Constant (GlobalReference))
 import LLVM.AST.Type     (i1, i8, i32, i64, ptr)
 
+import qualified Pretty
 import qualified Name
 import qualified IR
 
 
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION FRONTEND
+
+instance Pretty.Output Module where
+    output = Pretty.outputShow
 
 translate :: IR.Block -> Module
 translate block = result where

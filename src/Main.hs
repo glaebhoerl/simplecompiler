@@ -6,12 +6,11 @@ import Control.Exception  (SomeException, catch)
 import Data.List          (partition, isPrefixOf)
 import System.Environment (getArgs)
 
-import qualified System.Directory                          as Directory
-import qualified System.Exit                               as Exit
-import qualified System.Process                            as Process
-import qualified Foreign.Ptr                               as Ptr
-import qualified Data.ByteString                           as ByteString
-import qualified Data.Text.Prettyprint.Doc.Render.Terminal as Pretty
+import qualified System.Directory as Directory
+import qualified System.Exit      as Exit
+import qualified System.Process   as Process
+import qualified Foreign.Ptr      as Ptr
+import qualified Data.ByteString  as ByteString
 
 import qualified LLVM.Analysis        as L
 import qualified LLVM.Context         as L
@@ -22,6 +21,7 @@ import qualified LLVM.PassManager     as L
 import qualified LLVM.Target          as L
 import qualified LLVM.Transforms      as L
 
+import qualified Pretty
 import qualified Token
 import qualified AST
 import qualified Name
@@ -187,14 +187,14 @@ run = do
 
 foreign import ccall "dynamic" runMainPtr :: Ptr.FunPtr (IO Int32) -> IO Int32
 
-outputCommand :: Output a => Command a -> Command ()
+outputCommand :: Pretty.Output a => Command a -> Command ()
 outputCommand command = do
     Arguments { outFile } <- arguments
     handle <- case outFile of
         Nothing       -> return stdout
         Just fileName -> usingManaged (withFile (textToString fileName) WriteMode) -- TODO exceptions :\
     result <- command
-    liftIO (output handle result)
+    liftIO (Pretty.output handle result)
 
 commands :: [(Text, Command ())]
 commands = execWriter $ do
@@ -217,37 +217,3 @@ main = runManaged $ do
         Arguments { command } <- arguments
         fromMaybe (throwError "Command not recognized!") (lookup command commands)
     either (liftIO . hPutStrLn stderr) return result
-
-class Output a where
-    output :: Handle -> a -> IO ()
-    default output :: Show a => Handle -> a -> IO ()
-    output handle = hPutStr handle . prettyShow
-
-instance Output Text where
-    output = hPutStr
-
-instance Output ByteString where
-    output = ByteString.hPutStr
-
-instance Output Token -- TODO nicer rendering
-instance Show a => Output [a]
-instance Show a => Output (AST a) -- TODO nicer rendering
-instance Output LLVM.Module
-
-instance Output IR.Block where
-    output handle = Pretty.hPutDoc handle . fmap (ansiStyle . IR.defaultStyle) . IR.render
-
-ansiStyle :: IR.Style -> Pretty.AnsiStyle
-ansiStyle IR.Style { IR.color, IR.isDull, IR.isBold, IR.isItalic, IR.isUnderlined } = style where
-    style     = maybe mempty (fromColor . mapColor) color ++ fontStyle
-    fontStyle = mconcat (catMaybes [justIf isBold Pretty.bold, justIf isItalic Pretty.italicized, justIf isUnderlined Pretty.underlined])
-    fromColor = if isDull then Pretty.colorDull else Pretty.color
-    mapColor  = \case
-        IR.Black   -> Pretty.Black
-        IR.White   -> Pretty.White
-        IR.Red     -> Pretty.Red
-        IR.Green   -> Pretty.Green
-        IR.Blue    -> Pretty.Blue
-        IR.Cyan    -> Pretty.Cyan
-        IR.Magenta -> Pretty.Magenta
-        IR.Yellow  -> Pretty.Yellow

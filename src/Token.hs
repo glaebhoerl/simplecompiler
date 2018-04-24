@@ -6,6 +6,8 @@ import Data.Char (isAlpha, isAlphaNum, isDigit)
 import qualified Data.Text   as Text
 import qualified Text.Earley as E
 
+import qualified Pretty
+
 class TextRepresentation a where
     toText :: a -> Text
 
@@ -123,6 +125,9 @@ instance TextRepresentation Token where
         Comma                  -> ","
         Colon                  -> ":"
         Semicolon              -> ";"
+
+instance Pretty.Output Token where
+    output = Pretty.outputShow -- TODO render
 
 type Expected = Text
 
