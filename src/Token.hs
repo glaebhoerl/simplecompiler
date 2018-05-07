@@ -6,7 +6,7 @@ import Data.Char (isAlpha, isAlphaNum, isDigit)
 import qualified Data.Text   as Text
 import qualified Text.Earley as E
 
-import qualified Pretty
+import qualified Pretty as P
 
 class TextRepresentation a where
     toText :: a -> Text
@@ -126,8 +126,32 @@ instance TextRepresentation Token where
         Colon                  -> ":"
         Semicolon              -> ";"
 
-instance Pretty.Output Token where
-    output = Pretty.outputShow -- TODO render
+instance P.Render Token where
+    type Name Token = Text
+    render = \case
+        Keyword        keyword -> P.keyword (toText keyword)
+        BinaryOperator binop   -> P.binaryOperator binop
+        UnaryOperator  unop    -> P.unaryOperator unop
+        Name           name'   -> P.note (P.Identifier (P.IdentInfo False name')) (P.pretty name')
+        Number         number' -> P.number number'
+        Text           text'   -> P.string text'
+        EqualsSign             -> P.assignEquals
+        Comma                  -> ","
+        Colon                  -> P.colon
+        Semicolon              -> P.semicolon
+        Bracket'       bracket -> P.note (bracketInfo (bracketKind bracket)) (P.pretty (toText bracket)) where
+            bracketInfo = \case
+                Round  -> P.Paren
+                Curly  -> P.Brace
+                Square -> P.Bracket
+
+instance P.Render [Token] where
+    type Name [Token] = Text
+    render = P.hsep . map P.render
+
+instance P.Output Token
+
+instance P.Output [Token]
 
 type Expected = Text
 

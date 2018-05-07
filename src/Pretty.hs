@@ -1,5 +1,5 @@
 module Pretty (Info (..), IdentInfo (..), Style (..), Color(..), DefaultStyle(..), Render(..), Output(..), outputShow,
-               note, keyword, colon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
+               note, keyword, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
                P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
 import MyPrelude
@@ -17,6 +17,9 @@ keyword = note Keyword . P.pretty
 
 colon :: Doc (Info name)
 colon = note Colon ":"
+
+semicolon :: Doc (Info name)
+semicolon = note Semicolon ";"
 
 defineEquals :: Doc (Info name)
 defineEquals = note DefineEquals "="
@@ -70,9 +73,11 @@ data Info name
     = Keyword
     | Brace
     | Paren
+    | Bracket
     | DefineEquals
     | AssignEquals
     | Colon
+    | Semicolon
     | UserOperator
     | Literal'   !LiteralType
     | Sigil      !(IdentInfo name)
@@ -117,13 +122,18 @@ instance DefaultStyle name => DefaultStyle (Info name) where
         Keyword          -> base { isBold = True }
         Brace            -> base { isBold = True }
         Paren            -> base
+        Bracket          -> base
         DefineEquals     -> base { isBold = True }
         AssignEquals     -> base { color  = Just Yellow }
         Colon            -> base { isBold = True }
+        Semicolon        -> base { isBold = True }
         UserOperator     -> base { color  = Just Yellow }
         Literal'   _     -> base { color  = Just Red } -- TODO ability to customize per-type?
         Sigil      info  -> base { isUnderlined = isDefinition info } -- also do applyStyle (identName info) if we want colored sigils
         Identifier info  -> applyStyle (base { isUnderlined = isDefinition info }) (identName info)
+
+instance DefaultStyle Text where
+    applyStyle base _ = base { color = Just Cyan }
 
 class Render a where
     type Name a
@@ -145,9 +155,6 @@ instance Output Text where
 
 instance Output ByteString where
     output = Data.ByteString.hPutStr
-
-instance Show a => Output [a] where -- shouldn't we have Output as the superclass constraint somehow...?
-    output = outputShow
 
 ansiStyle :: Style -> PT.AnsiStyle
 ansiStyle Style { color, isDull, isBold, isItalic, isUnderlined } = style where
