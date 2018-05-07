@@ -626,10 +626,10 @@ instance P.Render Block where
             BlockID i -> P.pretty i
             Return    -> P.keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
 
-        renderBody statements transfer = mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
+        renderBody statements transfer = mconcat (P.punctuate P.hardline (map renderStatement statements ++ [renderTransfer transfer]))
 
         renderStatement = \case
-            BlockDecl name block -> P.keyword "block" ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
+            BlockDecl name block -> P.keyword "block" ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline)
             Let       name expr  -> P.keyword "let"   ++ " " ++ typedName name ++ " " ++ P.defineEquals ++ " " ++ renderExpr expr
             Assign    name value -> letID False name  ++ " " ++ P.assignEquals ++ " " ++ renderValue value
             Say       value      -> builtin "say"     ++ P.parens (renderValue value)

@@ -1,6 +1,6 @@
 module Pretty (Info (..), IdentInfo (..), Style (..), Color(..), DefaultStyle(..), Render(..), Output(..), outputShow,
                note, keyword, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
-               P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
+               P.Doc, P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
 import MyPrelude
 

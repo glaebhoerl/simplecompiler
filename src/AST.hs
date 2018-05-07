@@ -4,8 +4,8 @@ import MyPrelude
 
 import qualified Text.Earley as E
 
-import qualified Pretty
-import qualified Token as T
+import qualified Pretty as P
+import qualified Token  as T
 
 data Expression name
     = Named          !name
@@ -180,9 +180,6 @@ blockGrammar = mdo
 
 type AST = Block
 
-instance Show name => Pretty.Output (Block name) where
-    output = Pretty.outputShow
-
 data Error
     = Invalid   !Int ![Expected] ![T.Token]
     | Ambiguous ![AST Text]
@@ -193,3 +190,39 @@ parse tokens = case E.fullParses (E.parser blockGrammar) tokens of
     ([], E.Report a b c) -> Left (Invalid a b c)
     ([one], _) -> Right one
     (more,  _) -> Left (Ambiguous more)
+
+nameText :: Bool -> Text -> P.Doc (P.Info Text)
+nameText isDefinition name = P.note (P.Identifier (P.IdentInfo isDefinition name)) (P.pretty name)
+
+renderBlock :: Block Text -> P.Doc (P.Info Text)
+renderBlock block = P.braces (P.nest 4 (P.hardline ++ P.render block) ++ P.hardline)
+
+instance (name ~ Text) => P.Render (Expression name) where
+    type Name (Expression name) = name
+    render = \case
+        Named          name           -> nameText False name
+        NumberLiteral  number         -> P.number number
+        TextLiteral    text           -> P.string text
+        UnaryOperator  op expr        -> P.unaryOperator op ++ P.render expr
+        BinaryOperator expr1 op expr2 -> P.render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ P.render expr2
+        Ask            expr           -> nameText False "ask" ++ P.parens (P.render expr) -- TODO: distinguish builtin names
+
+instance (name ~ Text) => P.Render (Statement name) where
+    type Name (Statement name) = name
+    render = \case
+        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ nameText True name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
+        Assign     name expr          -> nameText False name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
+        IfThen     expr block         -> P.keyword "if" ++ " " ++ P.render expr ++ " " ++ renderBlock block
+        IfThenElse expr block1 block2 -> P.render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
+        Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block
+        While      expr block         -> P.keyword "while" ++ " " ++ P.render expr ++ " " ++ renderBlock block
+        Return     maybeExpr          -> P.keyword "return" ++ (maybe "" (\expr -> " " ++ P.render expr) maybeExpr) ++ P.semicolon
+        Break                         -> P.keyword "break" ++ P.semicolon
+        Say        expr               -> nameText False "say"   ++ P.parens (P.render expr) ++ P.semicolon
+        Write      expr               -> nameText False "write" ++ P.parens (P.render expr) ++ P.semicolon
+
+instance (name ~ Text) => P.Render (Block name) where
+    type Name (Block name) = name
+    render (Block statements) = mconcat (P.punctuate P.hardline (map P.render statements))
+
+instance P.Output (Block Text)

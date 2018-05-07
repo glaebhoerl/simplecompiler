@@ -135,7 +135,7 @@ instance P.Render Token where
         Name           name'   -> P.note (P.Identifier (P.IdentInfo False name')) (P.pretty name')
         Number         number' -> P.number number'
         Text           text'   -> P.string text'
-        EqualsSign             -> P.assignEquals
+        EqualsSign             -> P.defineEquals
         Comma                  -> ","
         Colon                  -> P.colon
         Semicolon              -> P.semicolon

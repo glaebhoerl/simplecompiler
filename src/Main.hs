@@ -217,3 +217,6 @@ main = runManaged $ do
         Arguments { command } <- arguments
         fromMaybe (throwError "Command not recognized!") (lookup command commands)
     either (liftIO . hPutStrLn stderr) return result
+
+instance Pretty.Output (AST.Block ResolvedName) where output = todo
+instance Pretty.Output (AST.Block TypedName) where output = todo
