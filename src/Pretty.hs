@@ -1,6 +1,6 @@
 module Pretty (Info (..), IdentInfo (..), Style (..), Color(..), DefaultStyle(..), Render(..), Output(..), outputShow,
-               P.annotate, P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
--- TODO don't mass-reexport?
+               note, keyword, colon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
+               P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
 import MyPrelude
 
@@ -9,9 +9,64 @@ import qualified Data.Text.Prettyprint.Doc.Render.Terminal as PT
 
 import qualified Data.ByteString
 
+note :: a -> Doc a -> Doc a
+note = P.annotate
+
+keyword :: Text -> Doc (Info name)
+keyword = note Keyword . P.pretty
+
+colon :: Doc (Info name)
+colon = note Colon ":"
+
+defineEquals :: Doc (Info name)
+defineEquals = note DefineEquals "="
+
+assignEquals :: Doc (Info name)
+assignEquals = note AssignEquals "="
+
+string :: Text -> Doc (Info name)
+string = note (Literal' TextLiteral) . P.dquotes . P.pretty
+
+number :: (P.Pretty a, Integral a) => a -> Doc (Info name)
+number = note (Literal' IntLiteral) . P.pretty
+
+boolean :: Bool -> Doc (Info name)
+boolean = note (Literal' BoolLiteral) . (\case True -> "true"; False -> "false")
+
+braces :: Doc (Info name) -> Doc (Info name)
+braces doc = note Brace "{" ++ doc ++ note Brace "}"
+
+parens :: Doc (Info name) -> Doc (Info name)
+parens doc = note Paren "(" ++ doc ++ note Paren ")"
+
+-- FIXME: Deduplicate these with `module Token` maybe??
+unaryOperator :: UnaryOperator -> Doc (Info name)
+unaryOperator  = note UserOperator . \case
+    Not                   -> "!"
+    Negate                -> "-"
+
+binaryOperator :: BinaryOperator -> Doc (Info name)
+binaryOperator = note UserOperator . \case
+    ArithmeticOperator op -> case op of
+        Add               -> "+"
+        Sub               -> "-"
+        Mul               -> "*"
+        Div               -> "/"
+        Mod               -> "%"
+    ComparisonOperator op -> case op of
+        Equal             -> "=="
+        NotEqual          -> "!="
+        Less              -> "<"
+        LessEqual         -> "<="
+        Greater           -> ">"
+        GreaterEqual      -> ">="
+    LogicalOperator    op -> case op of
+        And               -> "&&"
+        Or                -> "||"
+
 -- TODO bikeshed the names of all these things
 
-data Info literalType name
+data Info name
     = Keyword
     | Brace
     | Paren
@@ -19,9 +74,15 @@ data Info literalType name
     | AssignEquals
     | Colon
     | UserOperator
-    | Literal'   !literalType
+    | Literal'   !LiteralType
     | Sigil      !(IdentInfo name)
     | Identifier !(IdentInfo name)
+    deriving (Generic, Eq, Show)
+
+data LiteralType
+    = IntLiteral
+    | BoolLiteral
+    | TextLiteral
     deriving (Generic, Eq, Show)
 
 data IdentInfo name = IdentInfo {
@@ -51,7 +112,7 @@ data Color
 class DefaultStyle a where
     applyStyle :: Style -> a -> Style
 
-instance (DefaultStyle literalType, DefaultStyle name) => DefaultStyle (Info literalType name) where
+instance DefaultStyle name => DefaultStyle (Info name) where
     applyStyle base = \case
         Keyword          -> base { isBold = True }
         Brace            -> base { isBold = True }
@@ -60,18 +121,18 @@ instance (DefaultStyle literalType, DefaultStyle name) => DefaultStyle (Info lit
         AssignEquals     -> base { color  = Just Yellow }
         Colon            -> base { isBold = True }
         UserOperator     -> base { color  = Just Yellow }
-        Literal'   lit   -> applyStyle (base { color  = Just Red }) lit
+        Literal'   _     -> base { color  = Just Red } -- TODO ability to customize per-type?
         Sigil      info  -> base { isUnderlined = isDefinition info } -- also do applyStyle (identName info) if we want colored sigils
         Identifier info  -> applyStyle (base { isUnderlined = isDefinition info }) (identName info)
 
 class Render a where
-    type InfoFor a
-    render :: a -> Doc (InfoFor a)
+    type Name a
+    render :: a -> Doc (Info (Name a))
 
 class Output a where
     output :: Handle -> a -> IO ()
-    default output :: (Render a, DefaultStyle (InfoFor a)) => Handle -> a -> IO ()
-    output handle = PT.hPutDoc handle . fmap (ansiStyle . (applyStyle plain)) . render
+    default output :: (Render a, DefaultStyle (Name a)) => Handle -> a -> IO ()
+    output handle = PT.hPutDoc handle . fmap (ansiStyle . applyStyle plain) . render
 
 plain :: Style
 plain = Style Nothing False False False False

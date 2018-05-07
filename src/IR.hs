@@ -9,10 +9,10 @@ import MyPrelude
 
 import qualified Data.Map as Map
 
-import qualified Pretty
-import qualified AST  as AST
-import qualified Name as AST
-import qualified Type as AST
+import qualified Pretty as P
+import qualified AST    as AST
+import qualified Name   as AST
+import qualified Type   as AST
 
 
 ---------------------------------------------------------------------------------------------------- TYPE DEFINITIONS
@@ -589,9 +589,6 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
 
 ---------------------------------------------------------------------------------------------------- PRETTY PRINTING
 
-instance Pretty.DefaultStyle (Type Expression) where
-    applyStyle base = const base
-
 data IdentName
     = LetName    !(Name Expression)
     | BlockName  !(Name Block)
@@ -599,99 +596,68 @@ data IdentName
     | GlobalName !Text
     deriving (Generic, Eq, Show)
 
-instance Pretty.DefaultStyle IdentName where
+instance P.DefaultStyle IdentName where
     applyStyle base = \case
-        LetName    _ -> base { Pretty.color = Just Pretty.Magenta }
-        BlockName  _ -> base { Pretty.color = Just Pretty.Green   }
-        TypeName   _ -> base { Pretty.color = Just Pretty.Cyan    }
-        GlobalName _ -> base { Pretty.color = Just Pretty.Yellow  }
+        LetName    _ -> base { P.color = Just P.Magenta }
+        BlockName  _ -> base { P.color = Just P.Green   }
+        TypeName   _ -> base { P.color = Just P.Cyan    }
+        GlobalName _ -> base { P.color = Just P.Yellow  }
 
-instance Pretty.Render Block where
-    type InfoFor Block = Pretty.Info (Type Expression) IdentName
+instance P.Render Block where
+    type Name Block = IdentName
     render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
-        note         = Pretty.annotate
-        keyword      = note Pretty.Keyword
-        operator     = note Pretty.UserOperator
-        colon        = note Pretty.Colon ":"
-        defineEquals = note Pretty.DefineEquals "="
-        assignEquals = note Pretty.AssignEquals "="
-        string       = note (Pretty.Literal' Text) . Pretty.dquotes . Pretty.pretty
-        number       = note (Pretty.Literal' Int) . Pretty.pretty
-        builtin      = renderName . Pretty.IdentInfo False . GlobalName
-        type'        = renderName . Pretty.IdentInfo False . TypeName
-        blockID def  = renderName . Pretty.IdentInfo def   . BlockName
-        letID   def  = renderName . Pretty.IdentInfo def   . LetName
-        braces  doc  = note Pretty.Brace "{" ++ doc ++ note Pretty.Brace "}"
-        parens  doc  = note Pretty.Paren "(" ++ doc ++ note Pretty.Paren ")"
+        builtin      = renderName . P.IdentInfo False . GlobalName
+        type'        = renderName . P.IdentInfo False . TypeName
+        blockID def  = renderName . P.IdentInfo def   . BlockName
+        letID   def  = renderName . P.IdentInfo def   . LetName
 
-        renderBody statements transfer = mconcat (map (Pretty.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
+        renderName :: P.IdentInfo IdentName -> Doc (P.Info IdentName)
+        renderName info = P.note (P.Sigil info) sigil ++ P.note (P.Identifier info) name where
+            (sigil, name) = case P.identName info of
+                LetName    n -> ("$", renderIdent (ident n))
+                BlockName  n -> ("%", renderIdent (ident n) ++ (if description n == "" then "" else "_" ++ P.pretty (description n)))
+                TypeName   t -> ("",  P.pretty (show t))
+                GlobalName n -> ("",  P.pretty n)
+
+        renderIdent :: ID node -> Doc (P.Info IdentName)
+        renderIdent = \case
+            ASTName n -> P.pretty (AST.givenName n)
+            LetID   i -> P.pretty i
+            BlockID i -> P.pretty i
+            Return    -> P.keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
+
+        renderBody statements transfer = mconcat (map (P.hardline ++) (map renderStatement statements ++ [renderTransfer transfer]))
 
         renderStatement = \case
-            BlockDecl name block -> keyword "block"  ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ braces (Pretty.nest 4 (renderBody (body block) (transfer block)) ++ Pretty.hardline)
-            Let       name expr  -> keyword "let"    ++ " " ++ typedName name ++ " " ++ defineEquals ++ " " ++ renderExpr expr
-            Assign    name value -> letID False name ++ " " ++ assignEquals ++ " " ++ renderValue value
-            Say       value      -> builtin "say"    ++ parens (renderValue value)
-            Write     value      -> builtin "write"  ++ parens (renderValue value)
+            BlockDecl name block -> P.keyword "block" ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (renderBody (body block) (transfer block)) ++ P.hardline)
+            Let       name expr  -> P.keyword "let"   ++ " " ++ typedName name ++ " " ++ P.defineEquals ++ " " ++ renderExpr expr
+            Assign    name value -> letID False name  ++ " " ++ P.assignEquals ++ " " ++ renderValue value
+            Say       value      -> builtin "say"     ++ P.parens (renderValue value)
+            Write     value      -> builtin "write"   ++ P.parens (renderValue value)
 
         renderTransfer = \case
-            Jump         target  -> keyword "jump"   ++ " " ++ renderTarget target
-            Branch value targets -> keyword "branch" ++ " " ++ renderValue value ++ " " ++ Pretty.hsep (map renderTarget targets)
+            Jump         target  -> P.keyword "jump"   ++ " " ++ renderTarget target
+            Branch value targets -> P.keyword "branch" ++ " " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
 
-        renderTarget target = blockID False (targetBlock target) ++ parens (Pretty.hsep (Pretty.punctuate "," (map renderValue (targetArgs target))))
+        renderTarget target = blockID False (targetBlock target) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
 
         renderExpr = \case
             Value          value            -> renderValue value
-            UnaryOperator  op value         -> unaryOperator op ++ renderValue value
-            BinaryOperator value1 op value2 -> renderValue value1 ++ " " ++ binaryOperator op ++ " " ++ renderValue value2
-            Ask            value            -> builtin "ask" ++ parens (renderValue value)
+            UnaryOperator  op value         -> P.unaryOperator op ++ renderValue value
+            BinaryOperator value1 op value2 -> renderValue value1 ++ " " ++ P.binaryOperator op ++ " " ++ renderValue value2
+            Ask            value            -> builtin "ask" ++ P.parens (renderValue value)
 
         renderValue = \case
             Named   name    -> letID False name
             Literal literal -> renderLiteral literal
 
         renderLiteral = \case
-            Number  num  -> number num
-            String  text -> string text
+            Number  num  -> P.number num
+            String  text -> P.string text
 
-        renderName :: (Pretty.IdentInfo IdentName) -> Doc (Pretty.InfoFor Block)
-        renderName info = note (Pretty.Sigil info) sigil ++ note (Pretty.Identifier info) name where
-            (sigil, name) = case Pretty.identName info of
-                LetName    n -> ("$", renderIdent (ident n))
-                BlockName  n -> ("%", renderIdent (ident n) ++ (if description n == "" then "" else "_" ++ Pretty.pretty (description n)))
-                TypeName   t -> ("",  Pretty.pretty (show t))
-                GlobalName n -> ("",  Pretty.pretty n)
+        argumentList args = P.parens (P.hsep (P.punctuate "," (map typedName args)))
 
-        renderIdent :: ID node -> Doc (Pretty.InfoFor Block)
-        renderIdent = \case
-            ASTName n -> Pretty.pretty (AST.givenName n)
-            LetID   i -> Pretty.pretty i
-            BlockID i -> Pretty.pretty i
-            Return    -> keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
+        typedName name = letID True name ++ P.colon ++ " " ++ type' (nameType name)
 
-        argumentList args = parens (Pretty.hsep (Pretty.punctuate "," (map typedName args)))
 
-        typedName name = letID True name ++ colon ++ " " ++ type' (nameType name)
-
-        -- FIXME: Deduplicate these with `module Token` maybe?? Put them in MyPrelude?
-        unaryOperator  = operator . \case
-            Not                   -> "!"
-            Negate                -> "-"
-        binaryOperator = operator . \case
-            ArithmeticOperator op -> case op of
-                Add               -> "+"
-                Sub               -> "-"
-                Mul               -> "*"
-                Div               -> "/"
-                Mod               -> "%"
-            ComparisonOperator op -> case op of
-                Equal             -> "=="
-                NotEqual          -> "!="
-                Less              -> "<"
-                LessEqual         -> "<="
-                Greater           -> ">"
-                GreaterEqual      -> ">="
-            LogicalOperator    op -> case op of
-                And               -> "&&"
-                Or                -> "||"
-
-instance Pretty.Output Block
+instance P.Output Block
