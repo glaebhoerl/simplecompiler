@@ -599,18 +599,18 @@ instance P.Render Block where
             Text -> P.Text
 
         builtin :: Text            -> P.Document
-        builtin text = P.note (P.Identifier (P.IdentInfo text          False P.BuiltinName Nothing))                (P.pretty text)
+        builtin text = P.note (P.Identifier (P.IdentInfo text          P.Use P.BuiltinName Nothing))                (P.pretty text)
 
         type'   :: Type Expression -> P.Document
-        type'   ty   = P.note (P.Identifier (P.IdentInfo (showText ty) False P.TypeName    (Just (prettyType ty)))) (P.pretty (show ty))
+        type'   ty   = P.note (P.Identifier (P.IdentInfo (showText ty) P.Use P.TypeName    (Just (prettyType ty)))) (P.pretty (show ty))
 
-        blockID :: Bool -> Name Block -> P.Document
-        blockID isDef name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) isDef P.BlockName Nothing
+        blockID :: P.DefinitionOrUse -> Name Block -> P.Document
+        blockID defOrUse name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.BlockName Nothing
                              in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (P.pretty (identText (ident name)))
 
         -- TODO refactor `letID` and `blockID` maybe?
-        letID :: Bool -> Name Expression -> P.Document
-        letID   isDef name = let info = P.IdentInfo (identText (ident name)) isDef P.LetName (Just (prettyType (nameType name)))
+        letID :: P.DefinitionOrUse -> Name Expression -> P.Document
+        letID   defOrUse name = let info = P.IdentInfo (identText (ident name)) defOrUse P.LetName (Just (prettyType (nameType name)))
                              in  P.note (P.Sigil info) "$" ++ P.note (P.Identifier info) (P.pretty (identText (ident name)))
 
         identText :: ID node -> Text
@@ -623,9 +623,9 @@ instance P.Render Block where
         renderBody statements transfer = mconcat (P.punctuate P.hardline (map renderStatement statements ++ [renderTransfer transfer]))
 
         renderStatement = \case
-            BlockDecl name block -> P.keyword "block" ++ " " ++ blockID True name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline)
+            BlockDecl name block -> P.keyword "block" ++ " " ++ blockID P.Definition name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline)
             Let       name expr  -> P.keyword "let"   ++ " " ++ typedName name ++ " " ++ P.defineEquals ++ " " ++ renderExpr expr
-            Assign    name value -> letID False name  ++ " " ++ P.assignEquals ++ " " ++ renderValue value
+            Assign    name value -> letID P.Use name  ++ " " ++ P.assignEquals ++ " " ++ renderValue value
             Say       value      -> builtin "say"     ++ P.parens (renderValue value)
             Write     value      -> builtin "write"   ++ P.parens (renderValue value)
 
@@ -633,7 +633,7 @@ instance P.Render Block where
             Jump         target  -> P.keyword "jump"   ++ " " ++ renderTarget target
             Branch value targets -> P.keyword "branch" ++ " " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
 
-        renderTarget target = blockID False (targetBlock target) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+        renderTarget target = blockID P.Use (targetBlock target) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
 
         renderExpr = \case
             Value          value            -> renderValue value
@@ -642,7 +642,7 @@ instance P.Render Block where
             Ask            value            -> builtin "ask" ++ P.parens (renderValue value)
 
         renderValue = \case
-            Named   name    -> letID False name
+            Named   name    -> letID P.Use name
             Literal literal -> renderLiteral literal
 
         renderLiteral = \case
@@ -651,4 +651,4 @@ instance P.Render Block where
 
         argumentList args = P.parens (P.hsep (P.punctuate "," (map typedName args)))
 
-        typedName name = letID True name ++ P.colon ++ " " ++ type' (nameType name)
+        typedName name = letID P.Definition name ++ P.colon ++ " " ++ type' (nameType name)

@@ -455,7 +455,10 @@ otoh what's the point of translating the source program to globally unique names
 TODO
   refactor IR.Render in separate instances
   implement Render for ResolvedName, TypedName
+    ResolvedName: show the path in decls and also uses...?
+    TypedName: show the type in lets
   IR: fix syntax highlighting of `return` as a keyword
+  rename project...
 
 
 TODO

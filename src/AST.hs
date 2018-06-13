@@ -191,21 +191,21 @@ parse tokens = case E.fullParses (E.parser blockGrammar) tokens of
     ([one], _) -> Right one
     (more,  _) -> Left (Ambiguous more)
 
-nameText :: P.IdentSort -> Bool -> Text -> P.Document
-nameText isDefinition sort name = P.note (P.Identifier (P.IdentInfo name sort isDefinition Nothing)) (P.pretty name)
+nameText :: P.IdentSort -> P.DefinitionOrUse -> Text -> P.Document
+nameText defOrUse sort name = P.note (P.Identifier (P.IdentInfo name sort defOrUse Nothing)) (P.pretty name)
 
-unresolvedName :: Bool -> Text -> P.Document
+unresolvedName :: P.DefinitionOrUse -> Text -> P.Document
 unresolvedName = nameText P.UnresolvedName
 
 builtinName :: Text -> P.Document
-builtinName = nameText P.BuiltinName False
+builtinName = nameText P.BuiltinName P.Use
 
 renderBlock :: Block Text -> P.Document
 renderBlock block = P.braces (P.nest 4 (P.hardline ++ P.render block) ++ P.hardline)
 
 instance P.Render (Expression Text) where
     render = \case
-        Named          name           -> unresolvedName False name
+        Named          name           -> unresolvedName P.Use name
         NumberLiteral  number         -> P.number number
         TextLiteral    text           -> P.string text
         UnaryOperator  op expr        -> P.unaryOperator op ++ P.render expr
@@ -214,8 +214,8 @@ instance P.Render (Expression Text) where
 
 instance P.Render (Statement Text) where
     render = \case
-        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ unresolvedName True name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
-        Assign     name expr          -> unresolvedName False name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
+        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ unresolvedName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
+        Assign     name expr          -> unresolvedName P.Use name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
         IfThen     expr block         -> P.keyword "if" ++ " " ++ P.render expr ++ " " ++ renderBlock block
         IfThenElse expr block1 block2 -> P.render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
         Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block

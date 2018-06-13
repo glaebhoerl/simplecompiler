@@ -1,4 +1,4 @@
-module Pretty (Document, Info (..), IdentInfo (..), Type (..), IdentSort (..), Style (..), Color (..), Render (..), output,
+module Pretty (Document, Info (..), IdentInfo (..), DefinitionOrUse (..), Type (..), IdentSort (..), Style (..), Color (..), Render (..), output,
                note, keyword, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
                P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
@@ -93,11 +93,16 @@ data Type
     | Text
     deriving (Generic, Eq, Show)
 
+data DefinitionOrUse
+    = Definition
+    | Use
+    deriving (Generic, Eq, Show)
+
 data IdentInfo = IdentInfo {
-    identName    :: !Text,
-    isDefinition :: !Bool,
-    identSort    :: !IdentSort,
-    identType    :: !(Maybe Type)
+    identName :: !Text,
+    defOrUse  :: !DefinitionOrUse,
+    identSort :: !IdentSort,
+    identType :: !(Maybe Type)
 } deriving (Generic, Eq, Show)
 
 data IdentSort
@@ -139,8 +144,8 @@ defaultStyle = \case
     Semicolon        -> plain { isBold = True }
     UserOperator     -> plain { color  = Just Yellow }
     Literal    _     -> plain { color  = Just Red }
-    Sigil      info  -> plain { isUnderlined = isDefinition info }
-    Identifier info  -> plain { isUnderlined = isDefinition info, color = Just (identColorForSort (identSort info)) }
+    Sigil      info  -> plain { isUnderlined = defOrUse info == Definition }
+    Identifier info  -> plain { isUnderlined = defOrUse info == Definition, color = Just (identColorForSort (identSort info)) }
         where identColorForSort = \case
                   UnresolvedName -> Cyan
                   BuiltinName    -> Yellow

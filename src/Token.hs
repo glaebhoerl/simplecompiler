@@ -131,7 +131,7 @@ instance P.Render Token where
         Keyword        keyword -> P.keyword (toText keyword)
         BinaryOperator binop   -> P.binaryOperator binop
         UnaryOperator  unop    -> P.unaryOperator unop
-        Name           name'   -> P.note (P.Identifier (P.IdentInfo name' False P.UnresolvedName Nothing)) (P.pretty name')
+        Name           name'   -> P.note (P.Identifier (P.IdentInfo name' P.Use P.UnresolvedName Nothing)) (P.pretty name')
         Number         number' -> P.number number'
         Text           text'   -> P.string text'
         EqualsSign             -> P.defineEquals
