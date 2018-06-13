@@ -453,6 +453,12 @@ otoh what's the point of translating the source program to globally unique names
 -}
 
 TODO
+  unify P.Render and P.Output
+  refactor IR.Render in separate instances
+  implement Render for ResolvedName, TypedName
+
+
+TODO
   make IDs follow each other in program order
   implement breaks
   implement astname-preservation for logical ops

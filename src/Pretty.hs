@@ -1,6 +1,6 @@
-module Pretty (Info (..), IdentInfo (..), Style (..), Color(..), DefaultStyle(..), Render(..), Output(..), outputShow,
+module Pretty (Document, Info (..), IdentInfo (..), Type (..), IdentSort (..), Style (..), Color (..), Render (..), Output (..), outputShow,
                note, keyword, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
-               P.Doc, P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
+               P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
 import MyPrelude
 
@@ -9,46 +9,49 @@ import qualified Data.Text.Prettyprint.Doc.Render.Terminal as PT
 
 import qualified Data.ByteString
 
-note :: a -> Doc a -> Doc a
+
+type Document = P.Doc Info
+
+note :: Info -> Document -> Document
 note = P.annotate
 
-keyword :: Text -> Doc (Info name)
+keyword :: Text -> Document
 keyword = note Keyword . P.pretty
 
-colon :: Doc (Info name)
+colon :: Document
 colon = note Colon ":"
 
-semicolon :: Doc (Info name)
+semicolon :: Document
 semicolon = note Semicolon ";"
 
-defineEquals :: Doc (Info name)
+defineEquals :: Document
 defineEquals = note DefineEquals "="
 
-assignEquals :: Doc (Info name)
+assignEquals :: Document
 assignEquals = note AssignEquals "="
 
-string :: Text -> Doc (Info name)
-string = note (Literal' TextLiteral) . P.dquotes . P.pretty
+string :: Text -> Document
+string = note (Literal Text) . P.dquotes . P.pretty
 
-number :: (P.Pretty a, Integral a) => a -> Doc (Info name)
-number = note (Literal' IntLiteral) . P.pretty
+number :: (P.Pretty a, Integral a) => a -> Document
+number = note (Literal Int) . P.pretty
 
-boolean :: Bool -> Doc (Info name)
-boolean = note (Literal' BoolLiteral) . (\case True -> "true"; False -> "false")
+boolean :: Bool -> Document
+boolean = note (Literal Bool) . (\case True -> "true"; False -> "false")
 
-braces :: Doc (Info name) -> Doc (Info name)
+braces :: Document -> Document
 braces doc = note Brace "{" ++ doc ++ note Brace "}"
 
-parens :: Doc (Info name) -> Doc (Info name)
+parens :: Document -> Document
 parens doc = note Paren "(" ++ doc ++ note Paren ")"
 
 -- FIXME: Deduplicate these with `module Token` maybe??
-unaryOperator :: UnaryOperator -> Doc (Info name)
+unaryOperator :: UnaryOperator -> Document
 unaryOperator  = note UserOperator . \case
     Not                   -> "!"
     Negate                -> "-"
 
-binaryOperator :: BinaryOperator -> Doc (Info name)
+binaryOperator :: BinaryOperator -> Document
 binaryOperator = note UserOperator . \case
     ArithmeticOperator op -> case op of
         Add               -> "+"
@@ -69,7 +72,7 @@ binaryOperator = note UserOperator . \case
 
 -- TODO bikeshed the names of all these things
 
-data Info name
+data Info
     = Keyword
     | Brace
     | Paren
@@ -79,21 +82,31 @@ data Info name
     | Colon
     | Semicolon
     | UserOperator
-    | Literal'   !LiteralType
-    | Sigil      !(IdentInfo name)
-    | Identifier !(IdentInfo name)
+    | Literal    !Type
+    | Sigil      !IdentInfo
+    | Identifier !IdentInfo
     deriving (Generic, Eq, Show)
 
-data LiteralType
-    = IntLiteral
-    | BoolLiteral
-    | TextLiteral
+data Type
+    = Int
+    | Bool
+    | Text
     deriving (Generic, Eq, Show)
 
-data IdentInfo name = IdentInfo {
+data IdentInfo = IdentInfo {
+    identName    :: !Text,
     isDefinition :: !Bool,
-    identName    :: !name
+    identSort    :: !IdentSort,
+    identType    :: !(Maybe Type)
 } deriving (Generic, Eq, Show)
+
+data IdentSort
+    = UnresolvedName
+    | BuiltinName
+    | LetName
+    | BlockName
+    | TypeName
+    deriving (Generic, Eq, Show)
 
 data Style = Style {
     color        :: !(Maybe Color),
@@ -114,38 +127,37 @@ data Color
     | Yellow
     deriving (Generic, Eq, Show)
 
-class DefaultStyle a where
-    applyStyle :: Style -> a -> Style
-
-instance DefaultStyle name => DefaultStyle (Info name) where
-    applyStyle base = \case
-        Keyword          -> base { isBold = True }
-        Brace            -> base { isBold = True }
-        Paren            -> base
-        Bracket          -> base
-        DefineEquals     -> base { isBold = True }
-        AssignEquals     -> base { color  = Just Yellow }
-        Colon            -> base { isBold = True }
-        Semicolon        -> base { isBold = True }
-        UserOperator     -> base { color  = Just Yellow }
-        Literal'   _     -> base { color  = Just Red } -- TODO ability to customize per-type?
-        Sigil      info  -> base { isUnderlined = isDefinition info } -- also do applyStyle (identName info) if we want colored sigils
-        Identifier info  -> applyStyle (base { isUnderlined = isDefinition info }) (identName info)
-
-instance DefaultStyle Text where
-    applyStyle base _ = base { color = Just Cyan }
-
-class Render a where
-    type Name a
-    render :: a -> Doc (Info (Name a))
-
-class Output a where
-    output :: Handle -> a -> IO ()
-    default output :: (Render a, DefaultStyle (Name a)) => Handle -> a -> IO ()
-    output handle = PT.hPutDoc handle . fmap (ansiStyle . applyStyle plain) . render
+defaultStyle :: Info -> Style
+defaultStyle = \case
+    Keyword          -> plain { isBold = True }
+    Brace            -> plain { isBold = True }
+    Paren            -> plain
+    Bracket          -> plain
+    DefineEquals     -> plain { isBold = True }
+    AssignEquals     -> plain { color  = Just Yellow }
+    Colon            -> plain { isBold = True }
+    Semicolon        -> plain { isBold = True }
+    UserOperator     -> plain { color  = Just Yellow }
+    Literal    _     -> plain { color  = Just Red }
+    Sigil      info  -> plain { isUnderlined = isDefinition info }
+    Identifier info  -> plain { isUnderlined = isDefinition info, color = Just (identColorForSort (identSort info)) }
+        where identColorForSort = \case
+                  UnresolvedName -> Cyan
+                  BuiltinName    -> Yellow
+                  LetName        -> Magenta
+                  BlockName      -> Green
+                  TypeName       -> Cyan
 
 plain :: Style
 plain = Style Nothing False False False False
+
+class Render a where
+    render :: a -> Document
+
+class Output a where
+    output :: Handle -> a -> IO ()
+    default output :: Render a => Handle -> a -> IO ()
+    output handle = PT.hPutDoc handle . fmap (ansiStyle . defaultStyle) . render
 
 outputShow :: Show a => Handle -> a -> IO ()
 outputShow handle = hPutStr handle . prettyShow

@@ -127,12 +127,11 @@ instance TextRepresentation Token where
         Semicolon              -> ";"
 
 instance P.Render Token where
-    type Name Token = Text
     render = \case
         Keyword        keyword -> P.keyword (toText keyword)
         BinaryOperator binop   -> P.binaryOperator binop
         UnaryOperator  unop    -> P.unaryOperator unop
-        Name           name'   -> P.note (P.Identifier (P.IdentInfo False name')) (P.pretty name')
+        Name           name'   -> P.note (P.Identifier (P.IdentInfo name' False P.UnresolvedName Nothing)) (P.pretty name')
         Number         number' -> P.number number'
         Text           text'   -> P.string text'
         EqualsSign             -> P.defineEquals
@@ -146,7 +145,6 @@ instance P.Render Token where
                 Square -> P.Bracket
 
 instance P.Render [Token] where
-    type Name [Token] = Text
     render = P.hsep . map P.render
 
 instance P.Output Token

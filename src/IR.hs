@@ -589,42 +589,36 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
 
 ---------------------------------------------------------------------------------------------------- PRETTY PRINTING
 
-data IdentName
-    = LetName    !(Name Expression)
-    | BlockName  !(Name Block)
-    | TypeName   !(Type Expression)
-    | GlobalName !Text
-    deriving (Generic, Eq, Show)
-
-instance P.DefaultStyle IdentName where
-    applyStyle base = \case
-        LetName    _ -> base { P.color = Just P.Magenta }
-        BlockName  _ -> base { P.color = Just P.Green   }
-        TypeName   _ -> base { P.color = Just P.Cyan    }
-        GlobalName _ -> base { P.color = Just P.Yellow  }
-
 instance P.Render Block where
-    type Name Block = IdentName
     render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
-        builtin      = renderName . P.IdentInfo False . GlobalName
-        type'        = renderName . P.IdentInfo False . TypeName
-        blockID def  = renderName . P.IdentInfo def   . BlockName
-        letID   def  = renderName . P.IdentInfo def   . LetName
 
-        renderName :: P.IdentInfo IdentName -> Doc (P.Info IdentName)
-        renderName info = P.note (P.Sigil info) sigil ++ P.note (P.Identifier info) name where
-            (sigil, name) = case P.identName info of
-                LetName    n -> ("$", renderIdent (ident n))
-                BlockName  n -> ("%", renderIdent (ident n) ++ (if description n == "" then "" else "_" ++ P.pretty (description n)))
-                TypeName   t -> ("",  P.pretty (show t))
-                GlobalName n -> ("",  P.pretty n)
+        prettyType :: Type Expression -> P.Type
+        prettyType = \case
+            Int  -> P.Int
+            Bool -> P.Bool
+            Text -> P.Text
 
-        renderIdent :: ID node -> Doc (P.Info IdentName)
-        renderIdent = \case
-            ASTName n -> P.pretty (AST.givenName n)
-            LetID   i -> P.pretty i
-            BlockID i -> P.pretty i
-            Return    -> P.keyword "return" -- FIXME this gets tagged as both a Keyword and an Identifier, but it seems to work out OK
+        builtin :: Text            -> P.Document
+        builtin text = P.note (P.Identifier (P.IdentInfo text          False P.BuiltinName Nothing))                (P.pretty text)
+
+        type'   :: Type Expression -> P.Document
+        type'   ty   = P.note (P.Identifier (P.IdentInfo (showText ty) False P.TypeName    (Just (prettyType ty)))) (P.pretty (show ty))
+
+        blockID :: Bool -> Name Block -> P.Document
+        blockID isDef name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) isDef P.BlockName Nothing
+                             in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (P.pretty (identText (ident name)))
+
+        -- TODO refactor `letID` and `blockID` maybe?
+        letID :: Bool -> Name Expression -> P.Document
+        letID   isDef name = let info = P.IdentInfo (identText (ident name)) isDef P.LetName (Just (prettyType (nameType name)))
+                             in  P.note (P.Sigil info) "$" ++ P.note (P.Identifier info) (P.pretty (identText (ident name)))
+
+        identText :: ID node -> Text
+        identText = \case
+            ASTName n -> AST.givenName n
+            LetID   i -> showText i
+            BlockID i -> showText i
+            Return    -> "return" -- FIXME tag as P.Keyword!
 
         renderBody statements transfer = mconcat (P.punctuate P.hardline (map renderStatement statements ++ [renderTransfer transfer]))
 

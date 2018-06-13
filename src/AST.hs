@@ -191,38 +191,41 @@ parse tokens = case E.fullParses (E.parser blockGrammar) tokens of
     ([one], _) -> Right one
     (more,  _) -> Left (Ambiguous more)
 
-nameText :: Bool -> Text -> P.Doc (P.Info Text)
-nameText isDefinition name = P.note (P.Identifier (P.IdentInfo isDefinition name)) (P.pretty name)
+nameText :: P.IdentSort -> Bool -> Text -> P.Document
+nameText isDefinition sort name = P.note (P.Identifier (P.IdentInfo name sort isDefinition Nothing)) (P.pretty name)
 
-renderBlock :: Block Text -> P.Doc (P.Info Text)
+unresolvedName :: Bool -> Text -> P.Document
+unresolvedName = nameText P.UnresolvedName
+
+builtinName :: Text -> P.Document
+builtinName = nameText P.BuiltinName False
+
+renderBlock :: Block Text -> P.Document
 renderBlock block = P.braces (P.nest 4 (P.hardline ++ P.render block) ++ P.hardline)
 
 instance (name ~ Text) => P.Render (Expression name) where
-    type Name (Expression name) = name
     render = \case
-        Named          name           -> nameText False name
+        Named          name           -> unresolvedName False name
         NumberLiteral  number         -> P.number number
         TextLiteral    text           -> P.string text
         UnaryOperator  op expr        -> P.unaryOperator op ++ P.render expr
         BinaryOperator expr1 op expr2 -> P.render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ P.render expr2
-        Ask            expr           -> nameText False "ask" ++ P.parens (P.render expr) -- TODO: distinguish builtin names
+        Ask            expr           -> builtinName "ask" ++ P.parens (P.render expr)
 
 instance (name ~ Text) => P.Render (Statement name) where
-    type Name (Statement name) = name
     render = \case
-        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ nameText True name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
-        Assign     name expr          -> nameText False name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
+        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ unresolvedName True name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
+        Assign     name expr          -> unresolvedName False name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
         IfThen     expr block         -> P.keyword "if" ++ " " ++ P.render expr ++ " " ++ renderBlock block
         IfThenElse expr block1 block2 -> P.render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
         Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block
         While      expr block         -> P.keyword "while" ++ " " ++ P.render expr ++ " " ++ renderBlock block
         Return     maybeExpr          -> P.keyword "return" ++ (maybe "" (\expr -> " " ++ P.render expr) maybeExpr) ++ P.semicolon
         Break                         -> P.keyword "break" ++ P.semicolon
-        Say        expr               -> nameText False "say"   ++ P.parens (P.render expr) ++ P.semicolon
-        Write      expr               -> nameText False "write" ++ P.parens (P.render expr) ++ P.semicolon
+        Say        expr               -> builtinName "say"   ++ P.parens (P.render expr) ++ P.semicolon
+        Write      expr               -> builtinName "write" ++ P.parens (P.render expr) ++ P.semicolon
 
 instance (name ~ Text) => P.Render (Block name) where
-    type Name (Block name) = name
     render (Block statements) = mconcat (P.punctuate P.hardline (map P.render statements))
 
 instance P.Output (Block Text)
