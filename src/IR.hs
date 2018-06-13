@@ -652,6 +652,3 @@ instance P.Render Block where
         argumentList args = P.parens (P.hsep (P.punctuate "," (map typedName args)))
 
         typedName name = letID True name ++ P.colon ++ " " ++ type' (nameType name)
-
-
-instance P.Output Block

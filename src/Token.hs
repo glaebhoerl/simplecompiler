@@ -147,10 +147,6 @@ instance P.Render Token where
 instance P.Render [Token] where
     render = P.hsep . map P.render
 
-instance P.Output Token
-
-instance P.Output [Token]
-
 type Expected = Text
 
 type Prod    r output = E.Prod r Expected Char output

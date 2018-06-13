@@ -32,8 +32,9 @@ import qualified IR
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION FRONTEND
 
-instance Pretty.Output Module where
-    output = Pretty.outputShow
+instance Pretty.Render Module where
+    render = Pretty.pretty . showText
+    outputWithStyle _ handle = hPutStr handle . showText
 
 translate :: IR.Block -> Module
 translate block = result where

@@ -187,7 +187,7 @@ run = do
 
 foreign import ccall "dynamic" runMainPtr :: Ptr.FunPtr (IO Int32) -> IO Int32
 
-outputCommand :: Pretty.Output a => Command a -> Command ()
+outputCommand :: Pretty.Render a => Command a -> Command ()
 outputCommand command = do
     Arguments { outFile } <- arguments
     handle <- case outFile of
@@ -218,5 +218,8 @@ main = runManaged $ do
         fromMaybe (throwError "Command not recognized!") (lookup command commands)
     either (liftIO . hPutStrLn stderr) return result
 
-instance Pretty.Output (AST.Block ResolvedName) where output = todo
-instance Pretty.Output (AST.Block TypedName) where output = todo
+instance Pretty.Render (AST ResolvedName) where
+    render = todo
+
+instance Pretty.Render (AST TypedName) where
+    render = todo

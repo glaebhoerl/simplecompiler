@@ -203,7 +203,7 @@ builtinName = nameText P.BuiltinName False
 renderBlock :: Block Text -> P.Document
 renderBlock block = P.braces (P.nest 4 (P.hardline ++ P.render block) ++ P.hardline)
 
-instance (name ~ Text) => P.Render (Expression name) where
+instance P.Render (Expression Text) where
     render = \case
         Named          name           -> unresolvedName False name
         NumberLiteral  number         -> P.number number
@@ -212,7 +212,7 @@ instance (name ~ Text) => P.Render (Expression name) where
         BinaryOperator expr1 op expr2 -> P.render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ P.render expr2
         Ask            expr           -> builtinName "ask" ++ P.parens (P.render expr)
 
-instance (name ~ Text) => P.Render (Statement name) where
+instance P.Render (Statement Text) where
     render = \case
         Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ unresolvedName True name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
         Assign     name expr          -> unresolvedName False name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
@@ -225,7 +225,5 @@ instance (name ~ Text) => P.Render (Statement name) where
         Say        expr               -> builtinName "say"   ++ P.parens (P.render expr) ++ P.semicolon
         Write      expr               -> builtinName "write" ++ P.parens (P.render expr) ++ P.semicolon
 
-instance (name ~ Text) => P.Render (Block name) where
+instance P.Render (Block Text) where
     render (Block statements) = mconcat (P.punctuate P.hardline (map P.render statements))
-
-instance P.Output (Block Text)

@@ -1,4 +1,4 @@
-module Pretty (Document, Info (..), IdentInfo (..), Type (..), IdentSort (..), Style (..), Color (..), Render (..), Output (..), outputShow,
+module Pretty (Document, Info (..), IdentInfo (..), Type (..), IdentSort (..), Style (..), Color (..), Render (..), output,
                note, keyword, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
                P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
@@ -153,20 +153,19 @@ plain = Style Nothing False False False False
 
 class Render a where
     render :: a -> Document
+    outputWithStyle :: (Info -> Style) -> Handle -> a -> IO ()
+    outputWithStyle style handle = PT.hPutDoc handle . fmap (ansiStyle . style) . render
 
-class Output a where
-    output :: Handle -> a -> IO ()
-    default output :: Render a => Handle -> a -> IO ()
-    output handle = PT.hPutDoc handle . fmap (ansiStyle . defaultStyle) . render
+output :: Render a => Handle -> a -> IO ()
+output = outputWithStyle defaultStyle
 
-outputShow :: Show a => Handle -> a -> IO ()
-outputShow handle = hPutStr handle . prettyShow
+instance Render Text where
+    render = P.pretty
+    outputWithStyle _ = hPutStr
 
-instance Output Text where
-    output = hPutStr
-
-instance Output ByteString where
-    output = Data.ByteString.hPutStr
+instance Render ByteString where
+    render = P.pretty . byteStringToText
+    outputWithStyle _ = Data.ByteString.hPutStr
 
 ansiStyle :: Style -> PT.AnsiStyle
 ansiStyle Style { color, isDull, isBold, isItalic, isUnderlined } = style where

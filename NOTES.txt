@@ -453,9 +453,9 @@ otoh what's the point of translating the source program to globally unique names
 -}
 
 TODO
-  unify P.Render and P.Output
   refactor IR.Render in separate instances
   implement Render for ResolvedName, TypedName
+  IR: fix syntax highlighting of `return` as a keyword
 
 
 TODO
