@@ -1,9 +1,10 @@
-module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..), renderName, resolveNames, ValidationError (..), validate) where
+module Name (Name (..), NameWith (..), Path, Info (..), ResolvedName, Error (..), resolveNames, ValidationError (..), validate) where
 
 import MyPrelude
 
 import qualified Data.Map as Map
 
+import qualified Pretty as P
 import qualified AST
 import AST (AST)
 
@@ -14,9 +15,6 @@ data Name = Name {
     path      :: !Path,
     givenName :: !Text
 } deriving (Generic, Eq, Ord, Show)
-
-renderName :: Name -> Text
-renderName (Name path given) = stringToText (intercalate "." (map show path)) ++ "." ++ given
 
 data NameWith info = NameWith {
     name :: !Name,
@@ -35,6 +33,12 @@ data Info = Info {
 } deriving (Generic, Eq, Show)
 
 type ResolvedName = NameWith Info
+
+instance AST.RenderName ResolvedName where
+    renderName (NameWith (Name path given) _) defOrUse = renderedPath ++ renderedGiven
+        where pathText      = foldr (\a b -> showText a ++ "." ++ b) "" path
+              renderedPath  = P.note (P.Identifier (P.IdentInfo pathText defOrUse P.BlockName Nothing)) (P.pretty pathText)
+              renderedGiven = P.note (P.Identifier (P.IdentInfo given    defOrUse P.LetName   Nothing)) (P.pretty given)
 
 data Error
     = NameNotFound !Text !Path

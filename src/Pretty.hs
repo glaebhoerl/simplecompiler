@@ -1,5 +1,5 @@
 module Pretty (Document, Info (..), IdentInfo (..), DefinitionOrUse (..), Type (..), IdentSort (..), Style (..), Color (..), Render (..), output,
-               note, keyword, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
+               note, keyword, dot, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
                P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
 import MyPrelude
@@ -17,6 +17,9 @@ note = P.annotate
 
 keyword :: Text -> Document
 keyword = note Keyword . P.pretty
+
+dot :: Document
+dot = note Dot "."
 
 colon :: Document
 colon = note Colon ":"
@@ -79,6 +82,7 @@ data Info
     | Bracket
     | DefineEquals
     | AssignEquals
+    | Dot
     | Colon
     | Semicolon
     | UserOperator
@@ -140,6 +144,7 @@ defaultStyle = \case
     Bracket          -> plain
     DefineEquals     -> plain { isBold = True }
     AssignEquals     -> plain { color  = Just Yellow }
+    Dot              -> plain { isBold = True }
     Colon            -> plain { isBold = True }
     Semicolon        -> plain { isBold = True }
     UserOperator     -> plain { color  = Just Yellow }

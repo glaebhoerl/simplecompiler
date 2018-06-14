@@ -599,7 +599,7 @@ instance P.Render Block where
             Text -> P.Text
 
         builtin :: Text            -> P.Document
-        builtin text = P.note (P.Identifier (P.IdentInfo text          P.Use P.BuiltinName Nothing))                (P.pretty text)
+        builtin text = P.note (P.Identifier (P.IdentInfo text          P.Use P.BuiltinName Nothing               )) (P.pretty text)
 
         type'   :: Type Expression -> P.Document
         type'   ty   = P.note (P.Identifier (P.IdentInfo (showText ty) P.Use P.TypeName    (Just (prettyType ty)))) (P.pretty (show ty))

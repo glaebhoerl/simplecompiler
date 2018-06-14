@@ -33,6 +33,9 @@ data Type
 -- I think we won't really need the binding type or initializer expression after typechecking anyways?
 type TypedName = NameWith Type
 
+instance AST.RenderName TypedName where
+    renderName (NameWith name type') = todo
+
 class Monad m => TypeCheckM m where
     recordType  :: Name -> Type -> m ()
     lookupType  :: Name -> m (Maybe Type)

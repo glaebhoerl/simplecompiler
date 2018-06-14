@@ -1,4 +1,4 @@
-module AST (Expression (..), BindingType (..), Statement (..), Block (..), AST, Error (..), parse) where
+module AST (Expression (..), BindingType (..), Statement (..), Block (..), AST, Error (..), parse, RenderName (..)) where
 
 import MyPrelude
 
@@ -194,28 +194,31 @@ parse tokens = case E.fullParses (E.parser blockGrammar) tokens of
 nameText :: P.IdentSort -> P.DefinitionOrUse -> Text -> P.Document
 nameText defOrUse sort name = P.note (P.Identifier (P.IdentInfo name sort defOrUse Nothing)) (P.pretty name)
 
-unresolvedName :: P.DefinitionOrUse -> Text -> P.Document
-unresolvedName = nameText P.UnresolvedName
-
 builtinName :: Text -> P.Document
 builtinName = nameText P.BuiltinName P.Use
 
-renderBlock :: Block Text -> P.Document
+renderBlock :: RenderName name => Block name -> P.Document
 renderBlock block = P.braces (P.nest 4 (P.hardline ++ P.render block) ++ P.hardline)
 
-instance P.Render (Expression Text) where
+class RenderName name where
+    renderName :: name -> P.DefinitionOrUse -> P.Document
+
+instance RenderName Text where
+    renderName = flip (nameText P.UnresolvedName)
+
+instance RenderName name => P.Render (Expression name) where
     render = \case
-        Named          name           -> unresolvedName P.Use name
+        Named          name           -> renderName name P.Use
         NumberLiteral  number         -> P.number number
         TextLiteral    text           -> P.string text
         UnaryOperator  op expr        -> P.unaryOperator op ++ P.render expr
         BinaryOperator expr1 op expr2 -> P.render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ P.render expr2
         Ask            expr           -> builtinName "ask" ++ P.parens (P.render expr)
 
-instance P.Render (Statement Text) where
+instance RenderName name => P.Render (Statement name) where
     render = \case
-        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ unresolvedName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
-        Assign     name expr          -> unresolvedName P.Use name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
+        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ renderName name P.Definition ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
+        Assign     name expr          -> renderName name P.Use ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
         IfThen     expr block         -> P.keyword "if" ++ " " ++ P.render expr ++ " " ++ renderBlock block
         IfThenElse expr block1 block2 -> P.render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
         Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block
@@ -225,5 +228,5 @@ instance P.Render (Statement Text) where
         Say        expr               -> builtinName "say"   ++ P.parens (P.render expr) ++ P.semicolon
         Write      expr               -> builtinName "write" ++ P.parens (P.render expr) ++ P.semicolon
 
-instance P.Render (Block Text) where
+instance RenderName name => P.Render (Block name) where
     render (Block statements) = mconcat (P.punctuate P.hardline (map P.render statements))
