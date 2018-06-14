@@ -34,11 +34,14 @@ data Info = Info {
 
 type ResolvedName = NameWith Info
 
-instance AST.RenderName ResolvedName where
-    renderName (NameWith (Name path given) _) defOrUse = renderedPath ++ renderedGiven
+instance AST.RenderName Name where
+    renderName (Name path given) defOrUse = renderedPath ++ renderedGiven
         where pathText      = foldr (\a b -> showText a ++ "." ++ b) "" path
               renderedPath  = P.note (P.Identifier (P.IdentInfo pathText defOrUse P.BlockName Nothing)) (P.pretty pathText)
               renderedGiven = P.note (P.Identifier (P.IdentInfo given    defOrUse P.LetName   Nothing)) (P.pretty given)
+
+instance AST.RenderName ResolvedName where
+    renderName (NameWith name _) = AST.renderName name
 
 data Error
     = NameNotFound !Text !Path

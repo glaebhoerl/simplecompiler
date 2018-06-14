@@ -4,6 +4,7 @@ import MyPrelude
 
 import qualified Data.Map as Map
 
+import qualified Pretty as P
 import qualified AST
 import AST (AST)
 import qualified Name
@@ -34,7 +35,16 @@ data Type
 type TypedName = NameWith Type
 
 instance AST.RenderName TypedName where
-    renderName (NameWith name type') = todo
+    renderName (NameWith name type') defOrUse = (if defOrUse == P.Definition then appendTypeAnnotation else id) (fmap setTypeInNote (AST.renderName name defOrUse))
+        where appendTypeAnnotation binding = binding ++ P.colon ++ " " ++ renderedType
+              renderedType = P.note (P.Identifier (P.IdentInfo typeName P.Use P.TypeName (Just prettyType))) (P.pretty typeName) where typeName = showText type'
+              setTypeInNote = \case
+                   P.Identifier info -> P.Identifier (info { P.identType = Just prettyType })
+                   _                 -> bug "Pretty-printing annotation on ResolvedName was not Identifier"
+              prettyType = case type' of
+                  Int  -> P.Int
+                  Bool -> P.Bool
+                  Text -> P.Text
 
 class Monad m => TypeCheckM m where
     recordType  :: Name -> Type -> m ()
