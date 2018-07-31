@@ -40,7 +40,7 @@ number :: (P.Pretty a, Integral a) => a -> Document
 number = note (Literal Int) . P.pretty
 
 boolean :: Bool -> Document
-boolean = note (Literal Bool) . (\case True -> "true"; False -> "false")
+boolean = note (Literal Bool) . bool "false" "true"
 
 braces :: Document -> Document
 braces doc = note Brace "{" ++ doc ++ note Brace "}"

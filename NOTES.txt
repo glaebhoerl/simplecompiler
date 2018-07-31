@@ -458,7 +458,6 @@ TODO
   IR: fix syntax highlighting of `return` as a keyword
   rename project...
 
-
 TODO
   make IDs follow each other in program order
   implement breaks
@@ -470,8 +469,6 @@ TODO
   --
   other optimization passes?
   text-path-utf8 (safe-exceptions?)
-  parse operator chains as flat lists, resolve precedences in post-pass?
-
 
 Babby's First Compiler
   why haskell and not rust

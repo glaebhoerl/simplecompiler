@@ -14,6 +14,8 @@ import qualified AST    as AST
 import qualified Name   as AST
 import qualified Type   as AST
 
+import Pretty (Render, render)
+
 
 ---------------------------------------------------------------------------------------------------- TYPE DEFINITIONS
 
@@ -589,66 +591,77 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
 
 ---------------------------------------------------------------------------------------------------- PRETTY PRINTING
 
-instance P.Render Block where
-    render rootBlock = renderBody (body rootBlock) (transfer rootBlock) where
+prettyType :: Type Expression -> P.Type
+prettyType = \case
+    Int  -> P.Int
+    Bool -> P.Bool
+    Text -> P.Text
 
-        prettyType :: Type Expression -> P.Type
-        prettyType = \case
-            Int  -> P.Int
-            Bool -> P.Bool
-            Text -> P.Text
+builtin :: Text -> P.Document
+builtin text = P.note (P.Identifier (P.IdentInfo text P.Use P.BuiltinName Nothing)) (P.pretty text)
 
-        builtin :: Text            -> P.Document
-        builtin text = P.note (P.Identifier (P.IdentInfo text          P.Use P.BuiltinName Nothing               )) (P.pretty text)
+blockId :: P.DefinitionOrUse -> Name Block -> P.Document
+blockId defOrUse name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.BlockName Nothing
+                        in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (render (ident name))
 
-        type'   :: Type Expression -> P.Document
-        type'   ty   = P.note (P.Identifier (P.IdentInfo (showText ty) P.Use P.TypeName    (Just (prettyType ty)))) (P.pretty (show ty))
+-- TODO refactor `letID` and `blockId` maybe?
+letId :: P.DefinitionOrUse -> Name Expression -> P.Document
+letId   defOrUse name = let info = P.IdentInfo (identText (ident name)) defOrUse P.LetName (Just (prettyType (nameType name)))
+                        in  P.note (P.Sigil info) "$" ++ P.note (P.Identifier info) (render (ident name))
 
-        blockID :: P.DefinitionOrUse -> Name Block -> P.Document
-        blockID defOrUse name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.BlockName Nothing
-                             in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (P.pretty (identText (ident name)))
+identText :: ID node -> Text
+identText = \case
+    ASTName n -> AST.givenName n
+    LetID   i -> showText i
+    BlockID i -> showText i
+    Return    -> "return" -- FIXME tag as P.Keyword!
 
-        -- TODO refactor `letID` and `blockID` maybe?
-        letID :: P.DefinitionOrUse -> Name Expression -> P.Document
-        letID   defOrUse name = let info = P.IdentInfo (identText (ident name)) defOrUse P.LetName (Just (prettyType (nameType name)))
-                             in  P.note (P.Sigil info) "$" ++ P.note (P.Identifier info) (P.pretty (identText (ident name)))
+renderBody :: [Statement] -> Transfer -> P.Document
+renderBody statements transfer = mconcat (P.punctuate P.hardline (map render statements ++ [render transfer]))
 
-        identText :: ID node -> Text
-        identText = \case
-            ASTName n -> AST.givenName n
-            LetID   i -> showText i
-            BlockID i -> showText i
-            Return    -> "return" -- FIXME tag as P.Keyword!
+-- we could probably refactor all these further but...
 
-        renderBody statements transfer = mconcat (P.punctuate P.hardline (map renderStatement statements ++ [renderTransfer transfer]))
+instance Render (ID node) where
+    render = P.pretty . identText
 
-        renderStatement = \case
-            BlockDecl name block -> P.keyword "block" ++ " " ++ blockID P.Definition name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline)
-            Let       name expr  -> P.keyword "let"   ++ " " ++ typedName name ++ " " ++ P.defineEquals ++ " " ++ renderExpr expr
-            Assign    name value -> letID P.Use name  ++ " " ++ P.assignEquals ++ " " ++ renderValue value
-            Say       value      -> builtin "say"     ++ P.parens (renderValue value)
-            Write     value      -> builtin "write"   ++ P.parens (renderValue value)
+instance Render (Type Expression) where
+    render ty = P.note (P.Identifier (P.IdentInfo (showText ty) P.Use P.TypeName (Just (prettyType ty)))) (P.pretty (show ty))
 
-        renderTransfer = \case
-            Jump         target  -> P.keyword "jump"   ++ " " ++ renderTarget target
-            Branch value targets -> P.keyword "branch" ++ " " ++ renderValue value ++ " " ++ P.hsep (map renderTarget targets)
+instance Render (Name Expression) where
+    render name = letId P.Definition name ++ P.colon ++ " " ++ render (nameType name)
 
-        renderTarget target = blockID P.Use (targetBlock target) ++ P.parens (P.hsep (P.punctuate "," (map renderValue (targetArgs target))))
+instance Render Block where
+    render block = renderBody (body block) (transfer block)
 
-        renderExpr = \case
-            Value          value            -> renderValue value
-            UnaryOperator  op value         -> P.unaryOperator op ++ renderValue value
-            BinaryOperator value1 op value2 -> renderValue value1 ++ " " ++ P.binaryOperator op ++ " " ++ renderValue value2
-            Ask            value            -> builtin "ask" ++ P.parens (renderValue value)
+instance Render Statement where
+    render = \case
+        BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline) where argumentList args = P.parens (P.hsep (P.punctuate "," (map render args)))
+        Let       name expr  -> P.keyword "let"   ++ " " ++ render name ++ " " ++ P.defineEquals ++ " " ++ render expr
+        Assign    name value -> letId P.Use name  ++ " " ++ P.assignEquals ++ " " ++ render value
+        Say       value      -> builtin "say"     ++ P.parens (render value)
+        Write     value      -> builtin "write"   ++ P.parens (render value)
 
-        renderValue = \case
-            Named   name    -> letID P.Use name
-            Literal literal -> renderLiteral literal
+instance Render Transfer where
+    render = \case
+        Jump         target  -> P.keyword "jump"   ++ " " ++ render target
+        Branch value targets -> P.keyword "branch" ++ " " ++ render value ++ " " ++ P.hsep (map render targets)
 
-        renderLiteral = \case
-            Number  num  -> P.number num
-            String  text -> P.string text
+instance Render Target where
+    render target = blockId P.Use (targetBlock target) ++ P.parens (P.hsep (P.punctuate "," (map render (targetArgs target))))
 
-        argumentList args = P.parens (P.hsep (P.punctuate "," (map typedName args)))
+instance Render Expression where
+    render = \case
+        Value          value            -> render value
+        UnaryOperator  op value         -> P.unaryOperator op ++ render value
+        BinaryOperator value1 op value2 -> render value1 ++ " " ++ P.binaryOperator op ++ " " ++ render value2
+        Ask            value            -> builtin "ask" ++ P.parens (render value)
 
-        typedName name = letID P.Definition name ++ P.colon ++ " " ++ type' (nameType name)
+instance Render Value where
+    render = \case
+        Named   name    -> letId P.Use name
+        Literal literal -> render literal
+
+instance Render Literal where
+    render = \case
+        Number num  -> P.number num
+        String text -> P.string text
