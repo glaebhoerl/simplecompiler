@@ -453,7 +453,6 @@ otoh what's the point of translating the source program to globally unique names
 -}
 
 TODO
-  refactor IR.Render into separate instances
   clean up "P.note (P.Identifier (P.IdentInfo ..." and similar ugliness?
   IR: fix syntax highlighting of `return` as a keyword
   rename project...

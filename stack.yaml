@@ -3,12 +3,14 @@ extra-package-dbs: []
 packages:
 - '.'
 extra-deps:
-- loc-0.1.3.0
-- generic-lens-0.4.0.1
-resolver: nightly-2017-07-25
+- loc-0.1.3.3
+#resolver: nightly-2017-07-25
+resolver: lts-12.10
+#resolver: nightly-2018-10-01
 
 nix:
   enable: true
   pure: true
-  packages: [llvm]
+  packages: [llvm_6]
+#  packages: [llvm_7]
   add-gc-roots: true

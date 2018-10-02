@@ -81,7 +81,6 @@ executable stageless
 --         Not evil, but use a local `LANGUAGE` pragma to call it out if it's necessary.
 
   build-depends:       base >= 4.7 && < 5,
-                       bound,
                        bytestring,
                        containers,
                        directory,

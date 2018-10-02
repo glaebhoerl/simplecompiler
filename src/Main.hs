@@ -154,6 +154,7 @@ build = do
     when (exitCode != Exit.ExitSuccess) $ do
         throwError (stringToText ("GCC reported error:\n" ++ out ++ "\n" ++ err))
 
+{- TODO port to new API
 -- OrcJIT version, fails to resolve `printf` symbol
 runOrcJit :: Command Text
 runOrcJit = do
@@ -171,6 +172,7 @@ runOrcJit = do
     jitSymbol    <- liftIO (L.findSymbol compileLayer mainSymbol True)
     result       <- (liftIO . runMainPtr . Ptr.castPtrToFunPtr . Ptr.wordPtrToPtr . L.jitSymbolAddress) jitSymbol
     return ("EXIT CODE: " ++ showText result)
+-}
 
 run :: Command ()
 run = do

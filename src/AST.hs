@@ -131,7 +131,9 @@ blockGrammar = mdo
         body <- block
         return (IfThen cond body)
     ifthenelse <- E.rule $ do
-        (IfThen cond body1) <- ifthen -- HACK
+        _     <- keyword T.K_if
+        cond  <- expression
+        body1 <- block
         _     <- keyword T.K_else
         body2 <- block
         return (IfThenElse cond body1 body2)

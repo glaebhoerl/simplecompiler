@@ -12,7 +12,7 @@ import System.IO                        as Reexports        (Handle, FilePath, I
 import Data.Foldable                    as Reexports        (foldl')
 import Data.Int                         as Reexports        ( Int,  Int8,  Int16,  Int32,  Int64)
 import Data.Word                        as Reexports        (Word, Word8, Word16, Word32, Word64)
-import Data.Either                      as Reexports        (isLeft, isRight{-, fromLeft, fromRight-})
+import Data.Either                      as Reexports        (isLeft, isRight, fromLeft, fromRight)
 import Data.Maybe                       as Reexports        (isJust, isNothing, fromMaybe, maybeToList, catMaybes, mapMaybe)
 import Data.List                        as Reexports        (uncons, intercalate)
 import Data.Function                    as Reexports        (fix, on)
@@ -48,7 +48,7 @@ import qualified Control.Monad.Reader           as Reader      (runReaderT, runR
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
 import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis,
                                                                 getPast, sendFuture, {-modifyForwards, -}getFuture, sendPast, modifyBackwards)
-import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor, _Ctor)
+import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor', _Ctor')
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
 import Data.Profunctor (Profunctor (lmap, rmap), Choice (right'))
@@ -107,12 +107,6 @@ left = either Just (const Nothing)
 
 right :: Either a b -> Maybe b
 right = either (const Nothing) Just
-
-fromLeft :: a -> Either a b -> a
-fromLeft r = fromLeftOr (const r)
-
-fromRight :: b -> Either a b -> b
-fromRight l = fromRightOr (const l)
 
 fromLeftOr :: (b -> a) -> Either a b -> a
 fromLeftOr f = either id f
@@ -199,8 +193,8 @@ modifyWhen :: Prism outer inner -> (inner -> inner) -> (outer -> outer)
 modifyWhen prism f outer = maybe outer (constructFrom prism . f) (getWhen prism outer)
 
 -- (the counterpart, `field`, is just re-exported as-is)
-constructor :: forall name inner outer. GenericLens.AsConstructor name inner outer => Prism outer inner
-constructor = GenericLens._Ctor @name
+constructor :: forall name inner outer. GenericLens.AsConstructor' name outer inner => Prism outer inner
+constructor = GenericLens._Ctor' @name
 
 {- I wanted to use `#foo` instead of `@"foo"` syntax, using OverloadedLabels, but turns out it doesn't allow uppercase labels (for constructors) :(
 
