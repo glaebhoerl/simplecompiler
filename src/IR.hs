@@ -130,7 +130,7 @@ class Monad m => TranslateM m where
     emitTransfer        :: Transfer            -> m ()
     currentBlock        :: m (Name Block)
     currentArguments    :: m [Name Expression]
-    currentContinuation :: Text -> Type Block -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
+    emitContinuation    :: Text -> Type Block -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
 
 translateTemporary :: TranslateM m => AST.Expression AST.TypedName -> m Value
 translateTemporary = translateExpression Nothing
@@ -167,7 +167,7 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
     AST.BinaryOperator expr1 (LogicalOperator op) expr2 | (expr2 `isn't` constructor @"NumberLiteral" && expr2 `isn't` constructor @"Named") -> do
         value1 <- translateTemporary expr1
         let opName = toLower (showText op)
-        joinPoint <- currentContinuation ("join_" ++ opName) (Parameters [Bool]) -- TODO use the provided name for the arg!
+        joinPoint <- emitContinuation ("join_" ++ opName) (Parameters [Bool]) -- TODO use the provided name for the arg!
         rhsBlock <- emitBlock opName (Parameters []) $ do
             value2 <- translateTemporary expr2
             return (Jump (Target joinPoint [value2]))
@@ -198,14 +198,14 @@ translateStatement = \case
         emitStatement (Assign translatedName value)
     AST.IfThen expr block -> do
         value <- translateTemporary expr
-        joinPoint <- currentContinuation "join_if" (Parameters [])
+        joinPoint <- emitContinuation "join_if" (Parameters [])
         thenBlock <- emitBlock "if" (Parameters []) $ do
             translateBlock block
             return (Jump (Target joinPoint []))
         emitTransfer (Branch value [Target joinPoint [], Target thenBlock []])
     AST.IfThenElse expr block1 block2 -> do
         value <- translateTemporary expr
-        joinPoint <- currentContinuation "join_if_else" (Parameters [])
+        joinPoint <- emitContinuation "join_if_else" (Parameters [])
         thenBlock <- emitBlock "if" (Parameters []) $ do
             translateBlock block1
             return (Jump (Target joinPoint []))
@@ -220,7 +220,7 @@ translateStatement = \case
             return (Jump (Target blockBody []))
         emitTransfer (Jump (Target foreverBlock []))
     AST.While expr block -> do
-        joinPoint <- currentContinuation "join_while" (Parameters [])
+        joinPoint <- emitContinuation "join_while" (Parameters [])
         whileBlock <- emitBlock "while" (Parameters []) $ do
             conditionTest <- currentBlock
             blockBody <- emitBlock "while_body" (Parameters []) $ do
@@ -347,8 +347,8 @@ instance TranslateM Translate where
     currentArguments = do
         getM (field @"innermostBlock" . field @"blockArguments")
 
-    currentContinuation :: Text -> Type Block -> Translate (Name Block)
-    currentContinuation = todo
+    emitContinuation :: Text -> Type Block -> Translate (Name Block)
+    emitContinuation = todo
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #2 -- Lazy State (Tardis)
 
@@ -488,8 +488,8 @@ instance TranslateM Translate' where
     currentArguments = do
         getM (field @"innermostBlock'" . field @"blockArguments'")
 
-    currentContinuation :: Text -> Type Block -> Translate' (Name Block)
-    currentContinuation description params = do
+    emitContinuation :: Text -> Type Block -> Translate' (Name Block)
+    emitContinuation description params = do
         alreadyEmitted <- getM (field @"innermostBlock'" . field @"emittedContinuation'")
         case alreadyEmitted of
             Nothing -> do
