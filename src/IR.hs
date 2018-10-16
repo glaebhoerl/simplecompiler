@@ -260,7 +260,95 @@ translateBlock (AST.Block statements) = mapM_ translateStatement statements
 translate :: AST.Block AST.TypedName -> Block
 translate = todo
 
+newtype Translate a = Translate {
+    runTranslate :: State TranslateState a
+} deriving (Functor, Applicative, Monad, MonadState TranslateState)
 
+data TranslateState = TranslateState {
+    lastID         :: !Int,
+    innermostBlock :: !BlockState
+} deriving Generic
+
+data BlockState = BlockState {
+    blockID             :: !(ID Block),
+    blockDescription    :: !Text,
+    blockArguments      :: ![Name Expression],
+    statements          :: ![Statement],
+    emittedContinuation :: !(Maybe (Name Block)),
+    enclosingBlock      :: !(Maybe BlockState)
+} deriving Generic
+
+class NewID node where
+    idIsEven :: Bool
+    makeID :: Int -> ID node
+
+instance NewID Expression where
+    idIsEven = True
+    makeID = LetID
+
+instance NewID Block where
+    idIsEven = False
+    makeID = BlockID
+
+newID :: forall node. NewID node => Translate (ID node)
+newID = do
+    -- NOTE incrementing first is significant, ID 0 is the root block!
+    modifyM (field @"lastID") $ \lastID ->
+        lastID + (if idIsEven @node == (lastID % 2 == 0) then 2 else 1)
+    new <- getM (field @"lastID")
+    return (makeID new)
+
+newArgumentIDs :: Type Block -> Translate [Name Expression]
+newArgumentIDs (Parameters argTypes) = do
+    forM argTypes $ \argType -> do
+        argID <- newID
+        return (Name argID argType "")
+
+instance TranslateM Translate where
+    translateName :: AST.TypedName -> Translate (Name Expression)
+    translateName (AST.NameWith name ty) = do
+        return (Name (ASTName name) (translatedType ty) (AST.givenName name))
+        where translatedType = \case
+                AST.Bool -> Bool
+                AST.Int  -> Int
+                AST.Text -> Text
+
+    emitStatement :: Statement -> Translate ()
+    emitStatement statement = do
+        modifyM (field @"innermostBlock" . field @"statements") (++ [statement])
+
+    emitLet :: Maybe AST.TypedName -> Expression -> Translate (Name Expression)
+    emitLet providedName expr = do
+        name <- case providedName of
+            Just astName -> do
+                translatedName <- translateName astName
+                assertM (nameType translatedName == typeOf expr)
+                return translatedName
+            Nothing -> do
+                letID <- newID
+                return (Name letID (typeOf expr) "")
+        emitStatement (Let name expr)
+        return name
+
+    emitBlock :: Text -> Type Block -> Translate Transfer -> Translate (Name Block)
+    emitBlock = todo
+
+    emitTransfer :: Transfer -> Translate ()
+    emitTransfer = todo
+
+    currentBlock :: Translate (Name Block)
+    currentBlock = do
+        blockID     <- getM (field @"innermostBlock" . field @"blockID")
+        description <- getM (field @"innermostBlock" . field @"blockDescription")
+        arguments   <- currentArguments
+        return (Name blockID (Parameters (map nameType arguments)) description)
+
+    currentArguments :: Translate [Name Expression]
+    currentArguments = do
+        getM (field @"innermostBlock" . field @"blockArguments")
+
+    currentContinuation :: Text -> Type Block -> Translate (Name Block)
+    currentContinuation = todo
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #2 -- Lazy State (Tardis)
 
