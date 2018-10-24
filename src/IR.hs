@@ -42,7 +42,7 @@ deriving instance Ord  (ID node)
 deriving instance Show (ID node)
 
 data Name node = Name {
-    ident       :: (ID   node), -- FIXME this needs to be lazy or we get a <<loop>>
+    ident       :: !(ID   node),
     nameType    :: !(Type node),
     description :: !Text
 } deriving (Generic, Show)
@@ -127,10 +127,10 @@ class Monad m => TranslateM m where
     emitStatement       :: Statement           -> m ()
     emitLet             :: Maybe AST.TypedName -> Expression -> m (Name Expression)
     emitBlock           :: Text -> Type Block  -> m Transfer -> m (Name Block)
+    emitContinuation    :: Text -> Type Block                -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
     emitTransfer        :: Transfer            -> m ()
     currentBlock        :: m (Name Block)
     currentArguments    :: m [Name Expression]
-    emitContinuation    :: Text -> Type Block -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
 
 translateTemporary :: TranslateM m => AST.Expression AST.TypedName -> m Value
 translateTemporary = translateExpression Nothing
@@ -249,16 +249,14 @@ translateBlock (AST.Block statements) = mapM_ translateStatement statements
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #1 -- Low-tech
 
--- IDEA
--- Instead of emitting blocks, emit forward declarations for them w/ their names/signatures
--- Save the bodies of emitted blocks in a Map keyed by their Name
--- Parameterize the whole structure over the type of block decls -- either names or whole blocks
--- do an fmap/traverse to `lookup` the bodies of blocks and fill in all the forward decls
--- but maybe this has to happen recursively?? bodies of blocks in the Map contain fw-decls referring to other block-bodies stored in the Map...?
--- graph-ish...
-
 translate :: AST.Block AST.TypedName -> Block
-translate = todo
+translate = evalState initialState . runTranslate . translateRootBlock
+    where
+        initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (BlockID 0) "root" [] [] Nothing Nothing (Just (innermostBlock initialState)) } -- HACK
+        translateRootBlock rootBlock = do
+            translateBlock rootBlock
+            emitTransfer (Jump (Target returnToCaller [Literal (Number 0)]))
+            liftM (snd . assert . getWhen (constructor @"BlockDecl") . assert . head) (getM (field @"innermostBlock" . field @"statements")) -- lol :(
 
 newtype Translate a = Translate {
     runTranslate :: State TranslateState a
@@ -274,7 +272,8 @@ data BlockState = BlockState {
     blockDescription    :: !Text,
     blockArguments      :: ![Name Expression],
     statements          :: ![Statement],
-    emittedContinuation :: !(Maybe (Name Block)),
+    emittedTransfer     :: !(Maybe Transfer), -- only stored while a block is suspended because its continuation still needs to be emitted
+    emittedContinuation :: !(Maybe Int),      -- index into `statements`
     enclosingBlock      :: !(Maybe BlockState)
 } deriving Generic
 
@@ -331,10 +330,59 @@ instance TranslateM Translate where
         return name
 
     emitBlock :: Text -> Type Block -> Translate Transfer -> Translate (Name Block)
-    emitBlock = todo
+    emitBlock description argTypes translateBody = do
+        blockID <- newID
+        args    <- newArgumentIDs argTypes
+        modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing Nothing (Just previouslyInnermost))
+        blockName     <- currentBlock
+        transferAtEnd <- translateBody
+        emitTransfer transferAtEnd -- this will handle popping and emitting the finished block
+        return blockName
 
+    emitContinuation :: Text -> Type Block -> Translate (Name Block)
+    emitContinuation nextBlockDescription nextBlockParams = do
+        alreadyEmitted <- getM (field @"innermostBlock" . field @"emittedContinuation")
+        assertM (alreadyEmitted == Nothing)
+        nextBlockIndex <- fmap length (getM (field @"innermostBlock" . field @"statements"))
+        nextBlockID    <- newID
+        nextBlockArgs  <- newArgumentIDs nextBlockParams
+        let nextBlockName = Name nextBlockID nextBlockParams nextBlockDescription
+        let nextBlockStub = Block { arguments = nextBlockArgs, body = [], transfer = Jump (Target returnToCaller []) }
+        emitStatement (BlockDecl nextBlockName nextBlockStub)
+        setM (field @"innermostBlock" . field @"emittedContinuation") (Just nextBlockIndex)
+        return nextBlockName
+
+    -- does this black have an emitted continuation?
+    --   yes -> push a new block with this block as the parent block, with the name/args of the emitted continuation
+    --   no  -> is this block the continuation of the enclosing block?
+    --      yes -> pop this block, then replace the continuation stub in the parent block with this block
+    --               then recurse from "is this block the continuation...?" for the parent block
+    --      no  -> pop this block, append this block as a blockdecl statement to the parent block
     emitTransfer :: Transfer -> Translate ()
-    emitTransfer = todo
+    emitTransfer transfer = do
+        BlockState { blockArguments, statements, emittedContinuation } <- getM (field @"innermostBlock")
+        case emittedContinuation of
+            Just index -> do
+                let stubDecl = assert (at index statements)
+                let (blockName, blockBody) = assert (getWhen (constructor @"BlockDecl") stubDecl)
+                setM (field @"innermostBlock" . field @"emittedTransfer")     (Just transfer) -- TODO assert that it was Nothing
+                setM (field @"innermostBlock" . field @"emittedContinuation") Nothing
+                modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState (ident blockName) (description blockName) (arguments blockBody) [] Nothing Nothing (Just previouslyInnermost))
+            Nothing -> do
+                -- TODO assert isNothing emittedTransfer
+                blockName <- currentBlock
+                let finishedBlock = Block blockArguments statements transfer
+                modifyM (field @"innermostBlock") (assert . enclosingBlock)
+                emittedTransfer <- getM (field @"innermostBlock" . field @"emittedTransfer")
+                case emittedTransfer of
+                    Just parentTransfer -> do
+                        modifyM (field @"innermostBlock" . field @"statements") $ map $ \case
+                            BlockDecl name _ | name == blockName -> BlockDecl blockName finishedBlock
+                            otherStatement                       -> otherStatement
+                        setM (field @"innermostBlock" . field @"emittedTransfer") Nothing
+                        emitTransfer parentTransfer
+                    Nothing  -> do
+                        emitStatement (BlockDecl blockName finishedBlock)
 
     currentBlock :: Translate (Name Block)
     currentBlock = do
@@ -346,9 +394,6 @@ instance TranslateM Translate where
     currentArguments :: Translate [Name Expression]
     currentArguments = do
         getM (field @"innermostBlock" . field @"blockArguments")
-
-    emitContinuation :: Text -> Type Block -> Translate (Name Block)
-    emitContinuation = todo
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #2 -- Lazy State (Tardis)
 
@@ -705,7 +750,7 @@ builtin text = P.note (P.Identifier (P.IdentInfo text P.Use P.BuiltinName Nothin
 
 blockId :: P.DefinitionOrUse -> Name Block -> P.Document
 blockId defOrUse name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.BlockName Nothing
-                        in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (render (ident name))
+                        in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (render (ident name) ++ P.pretty (if description name == "" then "" else "_" ++ description name))
 
 -- TODO refactor `letID` and `blockId` maybe?
 letId :: P.DefinitionOrUse -> Name Expression -> P.Document
