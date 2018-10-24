@@ -281,10 +281,10 @@ call callee args = L.Call {
 }
 
 printf :: Operand
-printf = ConstantOperand (GlobalReference (L.FunctionType i32 [ptr i8] True) "printf")
+printf = ConstantOperand (GlobalReference (ptr (L.FunctionType i32 [ptr i8] True)) "printf")
 
 scanf :: Operand
-scanf = ConstantOperand (GlobalReference (L.FunctionType i32 [ptr i8] True) "scanf")
+scanf = ConstantOperand (GlobalReference (ptr (L.FunctionType i32 [ptr i8] True)) "scanf")
 
 translateBlock :: LLVM m => IR.Block -> m (Terminator, [CallsBlockWith])
 translateBlock IR.Block { IR.arguments, IR.body, IR.transfer } = do
