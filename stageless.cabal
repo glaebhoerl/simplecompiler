@@ -96,7 +96,6 @@ executable stageless
                        prettyprinter-ansi-terminal,
                        process,
                        profunctors,
-                       tardis,
                        text
   ghc-options:         -O -W -Wall -Wcompat -Wincomplete-uni-patterns -Wincomplete-record-updates -Wredundant-constraints
 

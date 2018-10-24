@@ -26,7 +26,6 @@ import Control.Monad.Except             as Reexports        (ExceptT, Except, Mo
 import Control.Monad.Reader             as Reexports        (ReaderT, Reader, MonadReader, ask, local)
 import Control.Monad.Writer.Strict      as Reexports        (WriterT, Writer, MonadWriter, tell, runWriterT, runWriter, execWriterT, execWriter)
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
-import Control.Monad.Tardis             as Reexports        (TardisT, Tardis, MonadTardis)
 import Data.ByteString                  as Reexports        (ByteString)
 import Data.Text                        as Reexports        (Text, toLower, toUpper)
 import Data.Text.Prettyprint.Doc        as Reexports        (Doc)
@@ -46,8 +45,6 @@ import qualified Data.Text.Encoding             as Text
 import qualified Data.Text.Lazy                 as LazyText
 import qualified Control.Monad.Reader           as Reader      (runReaderT, runReader)
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
-import qualified Control.Monad.Tardis           as Tardis      (runTardisT, runTardis, evalTardisT, evalTardis, execTardisT, execTardis,
-                                                                getPast, sendFuture, {-modifyForwards, -}getFuture, sendPast, modifyBackwards)
 import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor', _Ctor')
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
@@ -353,105 +350,6 @@ lens /= n = modifyM lens (/ n)
 infixr 4 +=, -=, *=, /=
 
 -- we could have `%=`, but with *both* `%` and `%=` having different meanings relative to Haskell convention, it's probably too surprising
-
-
-
--------------------------------------------------------------------------- tardis
-
-runTardisT :: (bw, fw) -> TardisT bw fw m a -> m (a, (bw, fw))
-runTardisT = flip Tardis.runTardisT
-
-runTardis :: (bw, fw) -> Tardis bw fw a -> (a, (bw, fw))
-runTardis = flip Tardis.runTardis
-
-evalTardisT :: Monad m => (bw, fw) -> TardisT bw fw m a -> m a
-evalTardisT = flip Tardis.evalTardisT
-
-evalTardis :: (bw, fw) -> Tardis bw fw a -> a
-evalTardis = flip Tardis.evalTardis
-
-execTardisT ::  Monad m => (bw, fw) -> TardisT bw fw m a -> m (bw, fw)
-execTardisT = flip Tardis.execTardisT
-
-execTardis :: (bw, fw) -> Tardis bw fw a -> (bw, fw)
-execTardis = flip Tardis.execTardis
-
--- orphan but I don't care
-instance MonadFix m => MonadState fw (TardisT bw fw m) where
-    get = Tardis.getPast
-    put = Tardis.sendFuture
-
-backGetState :: MonadTardis bw fw m => m bw
-backGetState = Tardis.getFuture
-
-backSetState :: MonadTardis bw fw m => bw -> m ()
-backSetState = Tardis.sendPast
-
-doBackSetState :: MonadTardis bw fw m => m bw -> m ()
-doBackSetState action = mdo
-    backSetState state
-    state <- action
-    return ()
-
-backModifyState :: MonadTardis bw fw m => (bw -> bw) -> m ()
-backModifyState = Tardis.modifyBackwards
-
-doBackModifyState :: MonadTardis bw fw m => (bw -> m bw) -> m ()
-doBackModifyState modifyAction = mdo
-    backSetState newState
-    newState <- modifyAction oldState
-    oldState <- backGetState
-    return ()
-
-backSetM :: MonadTardis bw fw m => Lens bw inner -> inner -> m ()
-backSetM lens inner = Tardis.modifyBackwards (set lens inner)
-
-doBackSetM :: MonadTardis bw fw m => Lens bw inner -> m inner -> m ()
-doBackSetM lens action = mdo
-    backSetM lens inner
-    inner <- action
-    return ()
-
-backGetM :: MonadTardis bw fw m => Lens bw inner -> m inner
-backGetM lens = liftM (get lens) Tardis.getFuture
-
-backModifyM :: MonadTardis bw fw m => Lens bw inner -> (inner -> inner) -> m ()
-backModifyM lens f = Tardis.modifyBackwards (modify lens f)
-
-doBackModifyM :: MonadTardis bw fw m => Lens bw inner -> (inner -> m inner) -> m ()
-doBackModifyM lens modifyAction = mdo
-    backSetM lens newInner
-    newInner <- modifyAction oldInner
-    oldInner <- backGetM lens
-    return ()
-
-backGetWhenM :: MonadTardis bw fw m => Prism bw inner -> m (Maybe inner)
-backGetWhenM prism = liftM (getWhen prism) Tardis.getFuture
-
-backConstructFromM :: MonadTardis bw fw m => Prism bw inner -> inner -> m ()
-backConstructFromM prism inner = Tardis.sendPast (constructFrom prism inner)
-
-doBackConstructFromM :: MonadTardis bw fw m => Prism bw inner -> m inner -> m ()
-doBackConstructFromM prism action = mdo
-    backConstructFromM prism inner
-    inner <- action
-    return ()
-
-backModifyWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> inner) -> m ()
-backModifyWhenM prism f = Tardis.modifyBackwards (modifyWhen prism f)
-
-doBackModifyWhenM :: MonadTardis bw fw m => Prism bw inner -> (inner -> m inner) -> m ()
-doBackModifyWhenM prism modifyAction = mdo
-    forM_ maybeOldInner $ \oldInner -> mdo
-        backConstructFromM prism newInner
-        newInner <- modifyAction oldInner
-        return ()
-    maybeOldInner <- backGetWhenM prism
-    return ()
-
-
--- TODO zoomPast, zoomFuture, `atomically`, swap bw/fw, ...?
-
 
 
 

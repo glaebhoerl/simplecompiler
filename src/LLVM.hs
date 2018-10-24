@@ -346,7 +346,7 @@ translateTarget IR.Target { IR.targetBlock, IR.targetArgs } = do
 
 
 
----------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #1
+---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND
 
 -- Two passes using plain state monads
 
@@ -452,81 +452,3 @@ instance LLVM SecondPass where
             let newBlock = BasicBlock savedName instructions (Do terminator)
             return (newBlock : finishedBlocks)
         modifyM (field @"unfinishedBlocks" ) (assert . previousBlock)
-
-
-
-
----------------------------------------------------------------------------------------------------- TRANSLATION BACKEND #2 (BROKEN)
-
--- Single pass with Tardis monad -- DOESN'T WORK, hits a <<loop>>! :(
-
-newtype SinglePass a = SinglePass {
-    runOnePass :: Tardis Backwards Forwards a
-} deriving (Functor, Applicative, Monad, MonadFix, MonadState Forwards, MonadTardis Backwards Forwards)
-
-type Backwards = Map L.Name [CalledByBlockWith]
-
-data Forwards = Forwards {
-    unNamer           :: !Word,
-    globals_          :: ![Global],
-    allocas_          :: ![Named Instruction],
-    finishedBlocks_   :: ![BasicBlock],
-    unfinishedBlocks_ :: !UnfinishedBlock_
-} deriving Generic
-
-data UnfinishedBlock_ = UnfinishedBlock_ {
-    blockName_     :: !L.Name,
-    instructions_  :: ![Named Instruction],
-    previousBlock_ :: !(Maybe UnfinishedBlock_)
-} deriving (Generic, Eq)
-
-runSinglePass :: (forall m. LLVM m => m a) -> ([Global], a)
-runSinglePass = getOutput . runTardis (Map.empty, (Forwards 0 [] [] [] dummyBlock)) . runOnePass where
-    dummyBlock = UnfinishedBlock_ (L.UnName maxBound) [] Nothing
-    getOutput tardisResult =
-        let
-            resultValue = fst tardisResult
-            Forwards { globals_, allocas_, finishedBlocks_, unfinishedBlocks_ } = snd (snd tardisResult)
-            allocaBlock = BasicBlock "alloca" allocas_ (Do (L.Br { L.dest = "start", L.metadata' = [] }))
-            createdFn   = LG.functionDefaults { LG.name = "main", LG.returnType = i32, LG.basicBlocks = allocaBlock : finishedBlocks_ }
-        in
-            if unfinishedBlocks_ == dummyBlock
-                then (createdFn : globals_, resultValue)
-                else bug "The dummy block changed somehow!"
-
-instance LLVM SinglePass where
-    freshName = do
-        field @"unNamer" += 1
-        num <- getM (field @"unNamer")
-        return (L.UnName num)
-    emit instr = do
-        modifyM (field @"unfinishedBlocks_" . field @"instructions_") (++ [instr])
-    emitAlloca type' name = do
-        let instr = L.Alloca {
-            L.allocatedType = type',
-            L.numElements   = Nothing,
-            L.alignment     = 0,
-            L.metadata      = []
-        }
-        modifyM (field @"allocas_") (++ [name := instr])
-    emitGlobal global = do
-        modifyM (field @"globals_") (prepend global)
-    getArguments = do
-        thisBlock <- getM (field @"unfinishedBlocks_" . field @"blockName_")
-        callees   <- backGetState
-        return (Map.findWithDefault [] thisBlock callees)
-    emitBlock blockName bodyAction = do
-        modifyM (field @"unfinishedBlocks_") (UnfinishedBlock_ blockName [] . Just)
-        (terminator, callsBlocksWith) <- bodyAction
-        forM_ callsBlocksWith $ \CallsBlockWith { calledBlock, argumentsPassed } -> do
-            -- TODO assert that the `calledBlock` is one of those in `terminator`
-            when (argumentsPassed != []) $ do
-                let calledByThisBlock = CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }
-                backModifyState (Map.alter (Just . prepend calledByThisBlock . fromMaybe []) calledBlock)
-        doModifyM (field @"finishedBlocks_") $ \finishedBlocks -> do
-            instructions <- getM (field @"unfinishedBlocks_" . field @"instructions_")
-            savedName    <- getM (field @"unfinishedBlocks_" . field @"blockName_")
-            assertM (blockName == savedName)
-            let newBlock = BasicBlock savedName instructions (Do terminator)
-            return (newBlock : finishedBlocks)
-        modifyM (field @"unfinishedBlocks_") (assert . previousBlock_)
