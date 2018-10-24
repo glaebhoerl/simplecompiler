@@ -386,6 +386,7 @@ instance LLVM FirstPass where
             when (argumentsPassed != []) $ do
                 let calledByThisBlock = CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }
                 modifyM (field @"callersMap") (Map.alter (Just . prepend calledByThisBlock . fromMaybe []) calledBlock)
+                return ()
     emit       _   = return ()
     emitAlloca _ _ = return ()
     emitGlobal _   = return ()
@@ -417,6 +418,7 @@ instance LLVM SecondPass where
         return (L.UnName num)
     emit instruction = do
         modifyM (field @"unfinishedBlocks" . field @"instructions") (++ [instruction])
+        return ()
     emitAlloca type' name = do
         let instr = L.Alloca {
             L.allocatedType = type',
@@ -425,8 +427,10 @@ instance LLVM SecondPass where
             L.metadata      = []
         }
         modifyM (field @"allocas") (++ [name := instr])
+        return ()
     emitGlobal global = do
         modifyM (field @"globals") (prepend global)
+        return ()
     getArguments = do
         thisBlock <- getM (field @"unfinishedBlocks" . field @"blockName")
         callers   <- getM (field @"callersOfBlocks")
@@ -452,3 +456,4 @@ instance LLVM SecondPass where
             let newBlock = BasicBlock savedName instructions (Do terminator)
             return (newBlock : finishedBlocks)
         modifyM (field @"unfinishedBlocks" ) (assert . previousBlock)
+        return ()

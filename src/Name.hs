@@ -164,6 +164,7 @@ validate = runExcept . evalStateT [] . validateBlock where
         modifyState (prepend Map.empty)
         mapM_ validateStatement (AST.body block)
         modifyState (assert . tail)
+        return ()
     validateStatement = \case
         AST.Binding _ (NameWith name info) expr -> do
             validateExpression expr
@@ -172,6 +173,7 @@ validate = runExcept . evalStateT [] . validateBlock where
                 when (Map.member name scope) $ do
                     throwError (Redefined name)
                 return (prepend (Map.insert name info scope) (assert (tail context)))
+            return ()
         AST.Assign n expr -> do
             validateExpression expr
             validateName n

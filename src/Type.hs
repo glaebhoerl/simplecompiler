@@ -59,6 +59,7 @@ instance TypeCheckM TypeCheck where
     recordType name type' = TypeCheck $ do
         liftM (assert . not . Map.member name) getState
         modifyState (Map.insert name type')
+        return ()
     lookupType name = TypeCheck $ do
         liftM (Map.lookup name) getState
     reportError err = TypeCheck $ do

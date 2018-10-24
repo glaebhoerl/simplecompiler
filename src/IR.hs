@@ -315,6 +315,7 @@ instance TranslateM Translate where
     emitStatement :: Statement -> Translate ()
     emitStatement statement = do
         modifyM (field @"innermostBlock" . field @"statements") (++ [statement])
+        return ()
 
     emitLet :: Maybe AST.TypedName -> Expression -> Translate (Name Expression)
     emitLet providedName expr = do
@@ -368,6 +369,7 @@ instance TranslateM Translate where
                 setM (field @"innermostBlock" . field @"emittedTransfer")     (Just transfer) -- TODO assert that it was Nothing
                 setM (field @"innermostBlock" . field @"emittedContinuation") Nothing
                 modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState (ident blockName) (description blockName) (arguments blockBody) [] Nothing Nothing (Just previouslyInnermost))
+                return ()
             Nothing -> do
                 -- TODO assert isNothing emittedTransfer
                 blockName <- currentBlock
@@ -480,6 +482,7 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
         mapM_ checkStatement (body      block)
         checkTransfer        (transfer  block)
         modifyState (assert . parent)
+        return ()
     checkStatement = \case
         BlockDecl name block -> do
             recordID name -- block name is in scope for body
@@ -538,6 +541,7 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
             when (memberID ident scope) $ do -- FIXME this should be a shallow check?
                 throwError (Redefined ident)
             return (insertID ident nameType scope)
+        return ()
     checkID Name { ident, nameType, description } = do
         inContext <- liftM (lookupID ident) getState
         case inContext of

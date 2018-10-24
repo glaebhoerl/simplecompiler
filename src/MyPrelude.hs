@@ -44,7 +44,7 @@ import qualified Data.Text                      as Text
 import qualified Data.Text.Encoding             as Text
 import qualified Data.Text.Lazy                 as LazyText
 import qualified Control.Monad.Reader           as Reader      (runReaderT, runReader)
-import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put, modify')
+import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put)
 import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor', _Ctor')
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
@@ -127,6 +127,9 @@ whenM :: Monad m => m Bool -> m () -> m ()
 whenM conditionAction action = do
     condition <- conditionAction
     when condition action
+
+unused :: Functor m => m a -> m ()
+unused = fmap (const ())
 
 usingManaged :: MonadManaged m => (forall r. (a -> IO r) -> IO r) -> m a
 usingManaged with = using (managed with)
@@ -274,76 +277,65 @@ execState = flip State.execState
 getState :: MonadState s m => m s
 getState = State.get
 
+-- these could be defined in terms of `modifyState`/`doModifyState`, except they are the actual primitives of `MonadState`!
 setState :: MonadState s m => s -> m ()
 setState = State.put
 
 doSetState :: MonadState s m => m s -> m ()
-doSetState action = do
-    state <- action
-    setState $! state
+doSetState = unused . doModifyState . const
 
-modifyState :: MonadState s m => (s -> s) -> m ()
-modifyState = State.modify'
+modifyState :: MonadState s m => (s -> s) -> m s
+modifyState f = doModifyState (return . f)
 
-doModifyState :: MonadState s m => (s -> m s) -> m ()
+doModifyState :: MonadState s m => (s -> m s) -> m s
 doModifyState modifyAction = do
     oldState <- getState
     newState <- modifyAction oldState
     setState $! newState
+    return newState
 
 setM :: MonadState outer m => Lens outer inner -> inner -> m ()
-setM lens inner = modifyState (set lens inner)
+setM lens = doSetM lens . return
 
 doSetM :: MonadState outer m => Lens outer inner -> m inner -> m ()
-doSetM lens action = do
-    inner <- action
-    setM lens $! inner
+doSetM lens = unused . doModifyM lens . const
 
 getM :: MonadState outer m => Lens outer inner -> m inner
-getM lens = liftM (get lens) getState
+getM lens = modifyM lens id
 
-modifyM :: MonadState outer m => Lens outer inner -> (inner -> inner) -> m ()
-modifyM lens f = modifyState (modify lens f)
+modifyM :: MonadState outer m => Lens outer inner -> (inner -> inner) -> m inner
+modifyM lens f = doModifyM lens (return . f)
 
-doModifyM :: MonadState outer m => Lens outer inner -> (inner -> m inner) -> m ()
-doModifyM lens modifyAction = do
-    oldInner <- getM lens
-    newInner <- modifyAction oldInner
-    setM lens $! newInner
+doModifyM :: MonadState outer m => Lens outer inner -> (inner -> m inner) -> m inner
+doModifyM lens modifyAction = liftM (get lens) (doModifyState (lens modifyAction))
 
 getWhenM :: MonadState outer m => Prism outer inner -> m (Maybe inner)
-getWhenM prism = liftM (getWhen prism) getState
+getWhenM prism = modifyWhenM prism id
 
 constructFromM :: MonadState outer m => Prism outer inner -> inner -> m ()
-constructFromM prism inner = setState $! (constructFrom prism inner)
+constructFromM prism = doConstructFromM prism . return
 
 doConstructFromM :: MonadState outer m => Prism outer inner -> m inner -> m ()
-doConstructFromM prism action = do
-    inner <- action
-    constructFromM prism $! inner
+doConstructFromM prism = unused . doModifyWhenM prism . const
 
-modifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> inner) -> m ()
-modifyWhenM prism f = modifyState (modifyWhen prism f)
+modifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> inner) -> m (Maybe inner)
+modifyWhenM prism f = doModifyWhenM prism (return . f)
 
-doModifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> m inner) -> m ()
-doModifyWhenM prism modifyAction = do
-    maybeOldInner <- getWhenM prism
-    forM_ maybeOldInner $ \oldInner -> do
-        newInner <- modifyAction oldInner
-        constructFromM prism $! newInner
+doModifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> m inner) -> m (Maybe inner)
+doModifyWhenM prism modifyAction = liftM (getWhen prism) (doModifyState (prism modifyAction))
 
 -- TODO `zoom` maybe?
 
-(+=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m ()
+(+=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m inner
 lens += n = modifyM lens (+ n)
 
-(-=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m ()
+(-=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m inner
 lens -= n = modifyM lens (subtract n)
 
-(*=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m ()
+(*=) :: (MonadState outer m, Num inner) => Lens outer inner -> inner -> m inner
 lens *= n = modifyM lens (* n)
 
-(/=) :: (MonadState outer m, Fractional inner) => Lens outer inner -> inner -> m ()
+(/=) :: (MonadState outer m, Fractional inner) => Lens outer inner -> inner -> m inner
 lens /= n = modifyM lens (/ n)
 
 infixr 4 +=, -=, *=, /=

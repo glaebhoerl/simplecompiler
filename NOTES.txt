@@ -498,5 +498,4 @@ TODO
   make a lens alias for innermostBlock . blah?
   refactor emittedContinuation/Transfer into data ContinuationState = None | Emitted BlockState | Blah Transfer
   prettyprinting lost block descriptions, current fix is ugly, make it nicer (how did it work earlier?)
-  generalize modifyFoo to return the new value?
   rename to "democompiler" or something
