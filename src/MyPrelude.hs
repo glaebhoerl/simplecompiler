@@ -280,17 +280,16 @@ setState = State.put
 doSetState :: MonadState s m => m s -> m ()
 doSetState action = do
     state <- action
-    setState state
+    setState $! state
 
 modifyState :: MonadState s m => (s -> s) -> m ()
 modifyState = State.modify'
 
--- FIXME probably need to make this strict somewhere to match `modify'`! (also the other doModify... functions)
 doModifyState :: MonadState s m => (s -> m s) -> m ()
 doModifyState modifyAction = do
     oldState <- getState
     newState <- modifyAction oldState
-    setState newState
+    setState $! newState
 
 setM :: MonadState outer m => Lens outer inner -> inner -> m ()
 setM lens inner = modifyState (set lens inner)
@@ -298,7 +297,7 @@ setM lens inner = modifyState (set lens inner)
 doSetM :: MonadState outer m => Lens outer inner -> m inner -> m ()
 doSetM lens action = do
     inner <- action
-    setM lens inner
+    setM lens $! inner
 
 getM :: MonadState outer m => Lens outer inner -> m inner
 getM lens = liftM (get lens) getState
@@ -310,18 +309,18 @@ doModifyM :: MonadState outer m => Lens outer inner -> (inner -> m inner) -> m (
 doModifyM lens modifyAction = do
     oldInner <- getM lens
     newInner <- modifyAction oldInner
-    setM lens newInner
+    setM lens $! newInner
 
 getWhenM :: MonadState outer m => Prism outer inner -> m (Maybe inner)
 getWhenM prism = liftM (getWhen prism) getState
 
 constructFromM :: MonadState outer m => Prism outer inner -> inner -> m ()
-constructFromM prism inner = setState (constructFrom prism inner)
+constructFromM prism inner = setState $! (constructFrom prism inner)
 
 doConstructFromM :: MonadState outer m => Prism outer inner -> m inner -> m ()
 doConstructFromM prism action = do
     inner <- action
-    constructFromM prism inner
+    constructFromM prism $! inner
 
 modifyWhenM :: MonadState outer m => Prism outer inner -> (inner -> inner) -> m ()
 modifyWhenM prism f = modifyState (modifyWhen prism f)
@@ -331,7 +330,7 @@ doModifyWhenM prism modifyAction = do
     maybeOldInner <- getWhenM prism
     forM_ maybeOldInner $ \oldInner -> do
         newInner <- modifyAction oldInner
-        constructFromM prism newInner
+        constructFromM prism $! newInner
 
 -- TODO `zoom` maybe?
 

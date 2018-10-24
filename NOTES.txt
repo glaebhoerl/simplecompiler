@@ -500,4 +500,3 @@ TODO
   prettyprinting lost block descriptions, current fix is ugly, make it nicer (how did it work earlier?)
   generalize modifyFoo to return the new value?
   rename to "democompiler" or something
-  EncodeException "The serialized GlobalReference Name \"printf\" has type FunctionType {resultType = IntegerType {typeBits = 32}, argumentTypes = [PointerType {pointerReferent = IntegerType {typeBits = 8}, pointerAddrSpace = AddrSpace 0}], isVarArg = True} but should have type PointerType {pointerReferent = FunctionType {resultType = IntegerType {typeBits = 32}, argumentTypes = [PointerType {pointerReferent = IntegerType {typeBits = 8}, pointerAddrSpace = AddrSpace 0}], isVarArg = True}, pointerAddrSpace = AddrSpace 0}"
