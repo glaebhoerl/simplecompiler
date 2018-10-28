@@ -252,7 +252,7 @@ translateBlock (AST.Block statements) = mapM_ translateStatement statements
 translate :: AST.Block AST.TypedName -> Block
 translate = evalState initialState . runTranslate . translateRootBlock
     where
-        initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (BlockID 0) "root" [] [] Nothing Nothing (Just (innermostBlock initialState)) } -- HACK
+        initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (BlockID 0) "root" [] [] NoContinuation (Just (innermostBlock initialState)) } -- HACK
         translateRootBlock rootBlock = do
             translateBlock rootBlock
             emitTransfer (Jump (Target returnToCaller [Literal (Number 0)]))
@@ -265,17 +265,22 @@ newtype Translate a = Translate {
 data TranslateState = TranslateState {
     lastID         :: !Int,
     innermostBlock :: !BlockState
-} deriving Generic
+} deriving (Generic, Eq, Show)
 
 data BlockState = BlockState {
-    blockID             :: !(ID Block),
-    blockDescription    :: !Text,
-    blockArguments      :: ![Name Expression],
-    statements          :: ![Statement],
-    emittedTransfer     :: !(Maybe Transfer), -- only stored while a block is suspended because its continuation still needs to be emitted
-    emittedContinuation :: !(Maybe Int),      -- index into `statements`
-    enclosingBlock      :: !(Maybe BlockState)
-} deriving Generic
+    blockID           :: !(ID Block),
+    blockDescription  :: !Text,
+    blockArguments    :: ![Name Expression],
+    statements        :: ![Statement],
+    continuationState :: !ContinuationState,
+    enclosingBlock    :: !(Maybe BlockState)
+} deriving (Generic, Eq, Show)
+
+data ContinuationState
+    = NoContinuation
+    | EmittedContinuation !BlockState -- the `enclosingBlock` field is left `Nothing`, filled in later!
+    | EmittedTransfer     !Transfer
+    deriving (Generic, Eq, Show)
 
 class NewID node where
     idIsEven :: Bool
@@ -334,7 +339,7 @@ instance TranslateM Translate where
     emitBlock description argTypes translateBody = do
         blockID <- newID
         args    <- newArgumentIDs argTypes
-        modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing Nothing (Just previouslyInnermost))
+        modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] NoContinuation (Just previouslyInnermost))
         blockName     <- currentBlock
         transferAtEnd <- translateBody
         emitTransfer transferAtEnd -- this will handle popping and emitting the finished block
@@ -342,15 +347,14 @@ instance TranslateM Translate where
 
     emitContinuation :: Text -> Type Block -> Translate (Name Block)
     emitContinuation nextBlockDescription nextBlockParams = do
-        alreadyEmitted <- getM (field @"innermostBlock" . field @"emittedContinuation")
-        assertM (alreadyEmitted == Nothing)
-        nextBlockIndex <- fmap length (getM (field @"innermostBlock" . field @"statements"))
+        alreadyEmitted <- getM (field @"innermostBlock" . field @"continuationState")
+        assertM (alreadyEmitted == NoContinuation)
         nextBlockID    <- newID
         nextBlockArgs  <- newArgumentIDs nextBlockParams
         let nextBlockName = Name nextBlockID nextBlockParams nextBlockDescription
         let nextBlockStub = Block { arguments = nextBlockArgs, body = [], transfer = Jump (Target returnToCaller []) }
         emitStatement (BlockDecl nextBlockName nextBlockStub)
-        setM (field @"innermostBlock" . field @"emittedContinuation") (Just nextBlockIndex)
+        setM (field @"innermostBlock" . field @"continuationState") (EmittedContinuation (BlockState nextBlockID nextBlockDescription nextBlockArgs [] NoContinuation Nothing))
         return nextBlockName
 
     -- does this black have an emitted continuation?
@@ -361,29 +365,26 @@ instance TranslateM Translate where
     --      no  -> pop this block, append this block as a blockdecl statement to the parent block
     emitTransfer :: Transfer -> Translate ()
     emitTransfer transfer = do
-        BlockState { blockArguments, statements, emittedContinuation } <- getM (field @"innermostBlock")
-        case emittedContinuation of
-            Just index -> do
-                let stubDecl = assert (at index statements)
-                let (blockName, blockBody) = assert (getWhen (constructor @"BlockDecl") stubDecl)
-                setM (field @"innermostBlock" . field @"emittedTransfer")     (Just transfer) -- TODO assert that it was Nothing
-                setM (field @"innermostBlock" . field @"emittedContinuation") Nothing
-                modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState (ident blockName) (description blockName) (arguments blockBody) [] Nothing Nothing (Just previouslyInnermost))
+        BlockState { blockArguments, statements, continuationState, blockID } <- getM (field @"innermostBlock")
+        case continuationState of
+            EmittedTransfer _ -> bug "Transfer already emitted!"
+            EmittedContinuation continuationBlock -> do
+                setM (field @"innermostBlock" . field @"continuationState") (EmittedTransfer transfer)
+                modifyM (field @"innermostBlock") (\previouslyInnermost -> continuationBlock { enclosingBlock = Just previouslyInnermost })
                 return ()
-            Nothing -> do
-                -- TODO assert isNothing emittedTransfer
+            NoContinuation -> do
                 blockName <- currentBlock
                 let finishedBlock = Block blockArguments statements transfer
                 modifyM (field @"innermostBlock") (assert . enclosingBlock)
-                emittedTransfer <- getM (field @"innermostBlock" . field @"emittedTransfer")
-                case emittedTransfer of
-                    Just parentTransfer -> do
+                parentContinuationState <- getM (field @"innermostBlock" . field @"continuationState")
+                case parentContinuationState of
+                    EmittedTransfer parentTransfer -> do
                         modifyM (field @"innermostBlock" . field @"statements") $ map $ \case
                             BlockDecl name _ | name == blockName -> BlockDecl blockName finishedBlock
                             otherStatement                       -> otherStatement
-                        setM (field @"innermostBlock" . field @"emittedTransfer") Nothing
+                        setM (field @"innermostBlock" . field @"continuationState") NoContinuation
                         emitTransfer parentTransfer
-                    Nothing  -> do
+                    _ -> do
                         emitStatement (BlockDecl blockName finishedBlock)
 
     currentBlock :: Translate (Name Block)
