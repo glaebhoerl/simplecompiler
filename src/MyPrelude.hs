@@ -33,6 +33,7 @@ import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
 import GHC.Generics                     as Reexports        (Generic)
 import Data.Generics.Product.Fields     as Reexports        (field)
+import Data.Generics.Sum.Constructors   as Reexports        (AsConstructor')
 
 
 
@@ -45,7 +46,7 @@ import qualified Data.Text.Encoding             as Text
 import qualified Data.Text.Lazy                 as LazyText
 import qualified Control.Monad.Reader           as Reader      (runReaderT, runReader)
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put)
-import qualified Data.Generics.Sum.Constructors as GenericLens (AsConstructor', _Ctor')
+import qualified Data.Generics.Sum.Constructors as GenericLens (_Ctor')
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
 import Data.Profunctor (Profunctor (lmap, rmap), Choice (right'))
@@ -193,7 +194,7 @@ modifyWhen :: Prism outer inner -> (inner -> inner) -> (outer -> outer)
 modifyWhen prism f outer = maybe outer (constructFrom prism . f) (getWhen prism outer)
 
 -- (the counterpart, `field`, is just re-exported as-is)
-constructor :: forall name inner outer. GenericLens.AsConstructor' name outer inner => Prism outer inner
+constructor :: forall name inner outer. AsConstructor' name outer inner => Prism outer inner
 constructor = GenericLens._Ctor' @name
 
 {- I wanted to use `#foo` instead of `@"foo"` syntax, using OverloadedLabels, but turns out it doesn't allow uppercase labels (for constructors) :(

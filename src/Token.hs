@@ -54,9 +54,11 @@ data Keyword
     = K_break
     | K_else
     | K_forever
+    | K_function
     | K_if
     | K_let
     | K_return
+    | K_returns
     | K_var
     | K_while
     deriving (Generic, Eq, Show, Enum, Bounded)

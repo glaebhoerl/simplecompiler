@@ -496,6 +496,5 @@ TODO
   fix adder.src -- some problem with dead transfer at end of main after a `forever`?
   nicer fix for innermostBlock assert
   make a lens alias for innermostBlock . blah?
-  refactor emittedContinuation/Transfer into data ContinuationState = None | Emitted BlockState | Blah Transfer
   prettyprinting lost block descriptions, current fix is ugly, make it nicer (how did it work earlier?)
   rename to "democompiler" or something

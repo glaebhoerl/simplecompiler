@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
 module AST (Expression (..), BindingType (..), Statement (..), Block (..), AST, Error (..), parse, RenderName (..)) where
 
 import MyPrelude
@@ -9,11 +11,11 @@ import qualified Token  as T
 
 data Expression name
     = Named          !name
+    | Call           !name ![Expression name]
     | NumberLiteral  !Integer
     | TextLiteral    !Text
     | UnaryOperator  !UnaryOperator     !(Expression name)
     | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
-    | Ask            !(Expression name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data BindingType
@@ -21,7 +23,6 @@ data BindingType
     | Var
     deriving (Generic, Eq, Show)
 
--- TODO: add "plain blocks"
 data Statement name
     = Binding    !BindingType       !name              !(Expression name)
     | Assign     !name              !(Expression name)
@@ -31,12 +32,23 @@ data Statement name
     | While      !(Expression name) !(Block name)
     | Return     !(Maybe (Expression name))
     | Break
-    | Say        !(Expression name)
-    | Write      !(Expression name)
+    | Expression !(Expression name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 newtype Block name = Block {
     body :: [Statement name]
+} deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
+
+data Argument name = Argument {
+    argumentName :: !name,
+    argumentType :: !name
+} deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
+
+data Function name = Function {
+    name         :: !name,
+    arguments    :: ![Argument name],
+    returnType   :: !(Maybe name),
+    functionBody :: !(Block name)
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 type Expected = Text
@@ -44,18 +56,30 @@ type Expected = Text
 type Prod    r output = E.Prod r Expected T.Token output
 type Grammar r output = E.Grammar r (Prod r output)
 
+token :: T.Token -> Prod r ()
+token t = unused (E.token t)
+
+keyword :: T.Keyword -> Prod r ()
+keyword kw = token (T.Keyword kw)
+
+tokenConstructor :: forall name inner r. AsConstructor' name T.Token inner => Prod r inner
+tokenConstructor = E.terminal (getWhen (constructor @name))
+
 bracketed :: T.BracketKind -> Prod r output -> Prod r output
 bracketed kind inner = do
-    _      <- E.token (T.Bracket' (T.Bracket kind T.Open))
+    token (T.Bracket' (T.Bracket kind T.Open))
     output <- inner
-    _      <- E.token (T.Bracket' (T.Bracket kind T.Close))
+    token (T.Bracket' (T.Bracket kind T.Close))
     return output
+
+separatedBy :: [T.Token] -> Prod r output -> Prod r [output]
+separatedBy tokens element = oneOf [empty, liftA2 prepend element (zeroOrMore ((E.list tokens) `followedBy` element))]
+
+followedBy :: Prod r a -> Prod r b -> Prod r b
+followedBy = (*>)
 
 ruleCases :: [Prod r output] -> Grammar r output
 ruleCases cases = E.rule (oneOf cases)
-
-followedBy :: Applicative f => f a -> f b -> f b
-followedBy = (*>)
 
 -- from tightest to loosest; operators within a group have equal precedence
 precedenceGroups :: [[BinaryOperator]]
@@ -71,37 +95,37 @@ precedenceGroups = assert (justIf isWellFormed listOfGroups) where
          map LogicalOperator    [Or]]
 
 data BinaryOperationList
-    = Expression (Expression Text)
-    | BinaryOperation (Expression Text) BinaryOperator BinaryOperationList
+    = SingleExpression (Expression Text)
+    | BinaryOperation  (Expression Text) BinaryOperator BinaryOperationList
     deriving Show
 
 resolvePrecedences :: BinaryOperationList -> Expression Text
 resolvePrecedences binaryOperationList = finalResult where
     finalResult = case allPrecedencesResolved of
-        Expression expr -> expr
-        list            -> bug ("Unresolved binary operator precedence: " ++ prettyShow list)
+        SingleExpression expr -> expr
+        list                  -> bug ("Unresolved binary operator precedence: " ++ prettyShow list)
     allPrecedencesResolved = foldl' resolveOnePrecedenceLevel binaryOperationList precedenceGroups
     resolveOnePrecedenceLevel binOpList precedenceGroup = case binOpList of
         BinaryOperation expr1 op1 (BinaryOperation expr2 op2 rest)
             | elem op1 precedenceGroup -> resolveOnePrecedenceLevel (BinaryOperation (BinaryOperator expr1 op1 expr2) op2 rest) precedenceGroup
             | otherwise                -> BinaryOperation expr1 op1 (resolveOnePrecedenceLevel (BinaryOperation expr2 op2 rest) precedenceGroup)
-        BinaryOperation expr1 op (Expression expr2)
-            | elem op  precedenceGroup -> Expression (BinaryOperator expr1 op expr2)
+        BinaryOperation expr1 op (SingleExpression expr2)
+            | elem op  precedenceGroup -> SingleExpression (BinaryOperator expr1 op expr2)
         other -> other
 
 expressionGrammar :: Grammar r (Expression Text)
 expressionGrammar = mdo
-    atom     <- ruleCases [liftA1 Named         (E.terminal (getWhen (constructor @"Name"))),
-                           liftA1 NumberLiteral (E.terminal (getWhen (constructor @"Number"))),
-                           liftA1 TextLiteral   (E.terminal (getWhen (constructor @"Text"))),
-                           liftA1 Ask           (E.token (T.Name "ask") `followedBy` bracketed T.Round expression),
+    atom     <- ruleCases [liftA1 Named         (tokenConstructor @"Name"),
+                           liftA1 NumberLiteral (tokenConstructor @"Number"),
+                           liftA1 TextLiteral   (tokenConstructor @"Text"),
+                           liftA2 Call          (tokenConstructor @"Name") (bracketed T.Round (separatedBy [T.Comma] expression)),
                            bracketed T.Round expression]
 
-    unary    <- ruleCases [liftA2 UnaryOperator (E.terminal (getWhen (constructor @"UnaryOperator"))) atom,
+    unary    <- ruleCases [liftA2 UnaryOperator (tokenConstructor @"UnaryOperator") atom,
                            atom]
 
-    binaries <- ruleCases [liftA3 BinaryOperation unary (E.terminal (getWhen (constructor @"BinaryOperator"))) binaries,
-                           liftA1 Expression unary]
+    binaries <- ruleCases [liftA3 BinaryOperation  unary (tokenConstructor @"BinaryOperator") binaries,
+                           liftA1 SingleExpression unary]
 
     let expression = fmap resolvePrecedences binaries
 
@@ -110,66 +134,59 @@ expressionGrammar = mdo
 blockGrammar :: Grammar r (Block Text)
 blockGrammar = mdo
     expression <- expressionGrammar
-    let keyword kw = E.token (T.Keyword kw)
     -----------------------------------------------------------
     binding <- E.rule $ do
         letvar <- E.terminal (\case T.Keyword T.K_let -> Just Let; T.Keyword T.K_var -> Just Var; _ -> Nothing) -- TODO prism?
-        name   <- E.terminal (getWhen (constructor @"Name"))
-        _      <- E.token T.EqualsSign
+        name   <- tokenConstructor @"Name"
+        token T.EqualsSign
         rhs    <- expression
-        _      <- E.token T.Semicolon
+        token T.Semicolon
         return (Binding letvar name rhs)
     assign <- E.rule $ do
-        lhs <- E.terminal (getWhen (constructor @"Name"))
-        _   <- E.token T.EqualsSign
+        lhs <- tokenConstructor @"Name"
+        token T.EqualsSign
         rhs <- expression
-        _   <- E.token T.Semicolon
+        token T.Semicolon
         return (Assign lhs rhs)
     ifthen <- E.rule $ do
-        _    <- keyword T.K_if
+        keyword T.K_if
         cond <- expression
         body <- block
         return (IfThen cond body)
     ifthenelse <- E.rule $ do
-        _     <- keyword T.K_if
+        keyword T.K_if
         cond  <- expression
         body1 <- block
-        _     <- keyword T.K_else
+        keyword T.K_else
         body2 <- block
         return (IfThenElse cond body1 body2)
     forever <- E.rule $ do
-        _    <- keyword T.K_forever
+        keyword T.K_forever
         body <- block
         return (Forever body)
     while <- E.rule $ do
-        _    <- keyword T.K_while
+        keyword T.K_while
         cond <- expression
         body <- block
         return (While cond body)
     ret <- E.rule $ do
-        _   <- keyword T.K_return
+        keyword T.K_return
         arg <- liftA1 head (zeroOrOne expression)
-        _   <- E.token T.Semicolon
+        token T.Semicolon
         return (Return arg)
     break <- E.rule $ do
-        _ <- keyword T.K_break
-        _ <- E.token T.Semicolon
+        keyword T.K_break
+        token T.Semicolon
         return Break
-    say <- E.rule $ do
-        _    <- E.token (T.Name "say")
-        expr <- bracketed T.Round expression
-        _    <- E.token T.Semicolon
-        return (Say expr)
-    write <- E.rule $ do
-        _    <- E.token (T.Name "write")
-        expr <- bracketed T.Round expression
-        _    <- E.token T.Semicolon
-        return (Write expr)
+    exprStatement <- E.rule $ do
+        expr <- expression
+        token T.Semicolon
+        return (Expression expr)
     -----------------------------------------------------
-    oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, say, write]
+    oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement]
     moreStatements <- E.rule $ do
         first <- oneStatement
-        --_     <- oneOrMore (E.token T.Semicolon)
+        --_     <- oneOrMore (token T.Semicolon)
         rest  <- oneOrMoreStatements
         return (first : rest)
     oneOrMoreStatements <- E.rule (oneOf [liftA1 single oneStatement, moreStatements])
@@ -180,7 +197,24 @@ blockGrammar = mdo
     block <- E.rule (liftA1 Block (bracketed T.Curly statements))
     return (liftA1 Block statements)
 
-type AST = Block
+functionGrammar :: Grammar r (Function Text)
+functionGrammar = do
+    block <- blockGrammar
+    argument <- E.rule $ do
+        argumentName <- tokenConstructor @"Name"
+        token T.Colon
+        argumentType <- tokenConstructor @"Name"
+        return Argument { argumentName, argumentType }
+    E.rule $ do
+        keyword T.K_function
+        name         <- tokenConstructor @"Name"
+        arguments    <- bracketed T.Round (separatedBy [T.Comma] argument)
+        returnType   <- fmap head (zeroOrOne (keyword T.K_returns `followedBy` tokenConstructor @"Name"))
+        functionBody <- block
+        return Function { name, arguments, returnType, functionBody }
+
+
+type AST name = [Function name]
 
 data Error
     = Invalid   !Int ![Expected] ![T.Token]
@@ -188,7 +222,7 @@ data Error
     deriving (Generic, Show)
 
 parse :: [T.Token] -> Either Error (AST Text)
-parse tokens = case E.fullParses (E.parser blockGrammar) tokens of
+parse tokens = case E.fullParses (E.parser (liftM oneOrMore functionGrammar)) tokens of
     ([], E.Report a b c) -> Left (Invalid a b c)
     ([one], _) -> Right one
     (more,  _) -> Left (Ambiguous more)
@@ -215,7 +249,8 @@ instance RenderName name => P.Render (Expression name) where
         TextLiteral    text           -> P.string text
         UnaryOperator  op expr        -> P.unaryOperator op ++ P.render expr
         BinaryOperator expr1 op expr2 -> P.render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ P.render expr2
-        Ask            expr           -> builtinName "ask" ++ P.parens (P.render expr)
+        --Ask            expr           -> builtinName "ask" ++ P.parens (P.render expr)
+        Call           name args      -> todo name args
 
 instance RenderName name => P.Render (Statement name) where
     render = \case
@@ -227,8 +262,13 @@ instance RenderName name => P.Render (Statement name) where
         While      expr block         -> P.keyword "while" ++ " " ++ P.render expr ++ " " ++ renderBlock block
         Return     maybeExpr          -> P.keyword "return" ++ (maybe "" (\expr -> " " ++ P.render expr) maybeExpr) ++ P.semicolon
         Break                         -> P.keyword "break" ++ P.semicolon
-        Say        expr               -> builtinName "say"   ++ P.parens (P.render expr) ++ P.semicolon
-        Write      expr               -> builtinName "write" ++ P.parens (P.render expr) ++ P.semicolon
+        Expression expr               -> P.render expr ++ P.semicolon
 
 instance RenderName name => P.Render (Block name) where
     render (Block statements) = mconcat (P.punctuate P.hardline (map P.render statements))
+
+instance RenderName name => P.Render (Argument name) where
+    render = todo
+
+instance RenderName name => P.Render (Function name) where
+    render = todo
