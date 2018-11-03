@@ -1,3 +1,13 @@
+function isFizz(number: Int) returns Bool
+{
+    return (number % 3 == 0);
+}
+
+function isBuzz(number: Int) returns Bool
+{
+    return (number % 5 == 0);
+}
+
 function main()
 {
     var number = 1;
@@ -5,15 +15,13 @@ function main()
         let fizz = "Fizz";
         let buzz = "Buzz";
         let fizzBuzz = "FizzBuzz";
-        let isFizz = number % 3 == 0;
-        let isBuzz = number % 5 == 0;
-        if isFizz && isBuzz {
+        if isFizz(number) && isBuzz(number) {
             say(fizzBuzz);
         } else {
-            if isFizz {
+            if isFizz(number) {
                 say(fizz);
             } else {
-                if isBuzz {
+                if isBuzz(number) {
                     say(buzz);
                 } else {
                     write(number);
