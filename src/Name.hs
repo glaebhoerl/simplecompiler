@@ -10,6 +10,10 @@ import qualified Pretty as P
 import qualified AST
 import AST (AST)
 
+
+
+------------------------------------------------------------------------ types
+
 data BuiltinName
     = Builtin_Int
     | Builtin_Bool
@@ -38,18 +42,6 @@ data Name
     | Name         !LocalName
     deriving (Generic, Eq, Ord, Show)
 
-qualifiedName :: Name -> Text
-qualifiedName = \case
-    BuiltinName  name -> unqualifiedName (BuiltinName name)
-    FunctionName name -> "." ++ name
-    Name    localName -> "." ++ function (path localName) ++ Text.intercalate "." (map showText (scope (path localName))) ++ "." ++ givenName localName
-
-unqualifiedName :: Name -> Text
-unqualifiedName = \case
-    BuiltinName  builtin   -> Text.drop (Text.length "Builtin_" ) (showText builtin)
-    FunctionName name      -> name
-    Name         localName -> givenName localName
-
 data NameWith info = NameWith {
     name :: !Name,
     info :: !info
@@ -63,6 +55,22 @@ instance Ord (NameWith info) where
 
 type ResolvedName = NameWith AST.BindingType
 
+qualifiedName :: Name -> Text
+qualifiedName = \case
+    BuiltinName  name -> unqualifiedName (BuiltinName name)
+    FunctionName name -> "." ++ name
+    Name    localName -> "." ++ function (path localName) ++ "." ++ Text.intercalate "." (map showText (scope (path localName))) ++ "." ++ givenName localName
+
+unqualifiedName :: Name -> Text
+unqualifiedName = \case
+    BuiltinName  builtin   -> Text.drop (Text.length "Builtin_" ) (showText builtin)
+    FunctionName name      -> name
+    Name         localName -> givenName localName
+
+
+
+------------------------------------------------------------------------ pretty-printing
+
 instance AST.RenderName Name where
     renderName defOrUse = let makeName sort name = P.note (P.Identifier (P.IdentInfo name defOrUse sort Nothing)) (P.pretty name) in \case
         Name (LocalName Path { function, scope } given) -> renderedPath ++ renderedGiven
@@ -75,87 +83,14 @@ instance AST.RenderName Name where
 instance AST.RenderName ResolvedName where
     renderName defOrUse (NameWith name _) = AST.renderName defOrUse name
 
-data Error
-    = NameNotFound !Text !Path
-    | NameConflict !Text !Path
-    deriving (Generic, Show)
+
+
+------------------------------------------------------------------------ resolution frontend
 
 class Monad m => NameResolveM m where
     lookupName :: Text -> m ResolvedName
     enterScope :: m a -> m a
     bindName   :: AST.BindingType -> Text -> m ResolvedName
-
--- the stack of scopes we are currently inside
--- fst: how many sub-scopes within that scope we have visited so far
--- snd: the names bound within that scope
-type LocalContext = [(Int, Map Text AST.BindingType)]  -- TODO maybe use Natural and NonEmpty here
-
-data Context = Context {
-    functions       :: !(Set Text),
-    currentFunction :: !Text,
-    locals          :: !LocalContext
-} deriving (Generic, Show)
-
-lookupLocal :: Text -> LocalContext -> Maybe ([Int], AST.BindingType)
-lookupLocal name = \case
-    [] -> Nothing
-    ((_, names) : parent) -> case Map.lookup name names of
-        Just bindingType  -> Just (map fst parent, bindingType)
-        Nothing           -> lookupLocal name parent
-
-lookupInContext :: Text -> Context -> Maybe ResolvedName
-lookupInContext givenName Context { functions, currentFunction, locals } = head (catMaybes [tryLocal, tryFunction, tryBuiltin]) where
-    tryLocal    = fmap makeLocalName (lookupLocal givenName locals) where
-        makeLocalName (scope, info) = NameWith { name = Name LocalName { path = Path { function = currentFunction, scope }, givenName }, info }
-    tryFunction = justIf (Set.member givenName functions) NameWith { name = FunctionName givenName, info = AST.Let }
-    tryBuiltin  = fmap makeBuiltinName (lookup ("Builtin_" ++ givenName) builtinNames) where
-        builtinNames                = map (\builtinName -> (showText builtinName, builtinName)) (enumerate @BuiltinName)
-        makeBuiltinName builtinName = NameWith { name = BuiltinName builtinName, info = AST.Let }
-
-newtype NameResolve a = NameResolve {
-    runNameResolve :: StateT Context (Except Error) a
-} deriving (Functor, Applicative, Monad, MonadState Context, MonadError Error)
-
-instance NameResolveM NameResolve where
-    lookupName name = do
-        context <- getState
-        case lookupInContext name context of
-            Just found -> return found
-            Nothing    -> throwError (NameNotFound name (Path (currentFunction context) (map fst (locals context))))
-
-    enterScope action = do
-        modifyM (field @"locals") (prepend (0, Map.empty))
-        result    <- action
-        newLocals <- modifyM (field @"locals") (assert . tail)
-        case newLocals of
-            (scopeID, names) : rest -> do
-                assertM (scopeID >= 0)
-                setM (field @"locals") ((scopeID + 1, names) : rest)
-                return result
-            [] -> do
-                return result
-
-    bindName info name = do
-        context <- getState
-        case (locals context) of
-            [] -> bug "Attempted to bind a name when not in a scope!"
-            (scopeID, names) : rest -> do
-                when (Map.member name names) $ do
-                    throwError (NameConflict name (Path (currentFunction context) (map fst (locals context))))
-                setM (field @"locals") ((scopeID, Map.insert name info names) : rest)
-                return NameWith { name = Name LocalName { path = Path { function = currentFunction context, scope = map fst rest }, givenName = name }, info }
-
-resolveNames :: AST Text -> Either Error (AST ResolvedName)
-resolveNames = runExcept . evalStateT (Context Set.empty "" []) . runNameResolve . mapM resolveFunction
-
-resolveFunction :: AST.Function Text -> NameResolve (AST.Function ResolvedName)
-resolveFunction function@AST.Function { AST.functionName } = do
-    doModifyState $ \Context { functions, locals } -> do
-        assertM (locals == [])
-        when (Set.member functionName functions) $ do
-            throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
-        return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals }
-    resolveNamesIn function
 
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node Text -> m (node ResolvedName)
@@ -217,6 +152,91 @@ instance ResolveNamesIn AST.Statement where
 
 instance ResolveNamesIn AST.Expression where
     resolveNamesIn = mapM lookupName
+
+
+
+------------------------------------------------------------------------ resolution backend
+
+data Error
+    = NameNotFound !Text !Path
+    | NameConflict !Text !Path
+    deriving (Generic, Show)
+
+newtype NameResolve a = NameResolve {
+    runNameResolve :: StateT Context (Except Error) a
+} deriving (Functor, Applicative, Monad, MonadState Context, MonadError Error)
+
+resolveNames :: AST Text -> Either Error (AST ResolvedName)
+resolveNames = runExcept . evalStateT (Context Set.empty "" []) . runNameResolve . mapM resolveFunction
+
+resolveFunction :: AST.Function Text -> NameResolve (AST.Function ResolvedName)
+resolveFunction function@AST.Function { AST.functionName } = do
+    doModifyState $ \Context { functions, locals } -> do
+        assertM (locals == [])
+        when (Set.member functionName functions) $ do
+            throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
+        return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals }
+    resolveNamesIn function
+
+-- the stack of scopes we are currently inside
+-- fst: how many sub-scopes within that scope we have visited so far
+-- snd: the names bound within that scope
+type LocalContext = [(Int, Map Text AST.BindingType)]  -- TODO maybe use Natural and NonEmpty here
+
+data Context = Context {
+    functions       :: !(Set Text),
+    currentFunction :: !Text,
+    locals          :: !LocalContext
+} deriving (Generic, Show)
+
+lookupLocal :: Text -> LocalContext -> Maybe ([Int], AST.BindingType)
+lookupLocal name = \case
+    [] -> Nothing
+    ((_, names) : parent) -> case Map.lookup name names of
+        Just bindingType  -> Just (map fst parent, bindingType)
+        Nothing           -> lookupLocal name parent
+
+lookupInContext :: Text -> Context -> Maybe ResolvedName
+lookupInContext givenName Context { functions, currentFunction, locals } = head (catMaybes [tryLocal, tryFunction, tryBuiltin]) where
+    tryLocal    = fmap makeLocalName (lookupLocal givenName locals) where
+        makeLocalName (scope, info) = NameWith { name = Name LocalName { path = Path { function = currentFunction, scope }, givenName }, info }
+    tryFunction = justIf (Set.member givenName functions) NameWith { name = FunctionName givenName, info = AST.Let }
+    tryBuiltin  = fmap makeBuiltinName (lookup ("Builtin_" ++ givenName) builtinNames) where
+        builtinNames                = map (\builtinName -> (showText builtinName, builtinName)) (enumerate @BuiltinName)
+        makeBuiltinName builtinName = NameWith { name = BuiltinName builtinName, info = AST.Let }
+
+instance NameResolveM NameResolve where
+    lookupName name = do
+        context <- getState
+        case lookupInContext name context of
+            Just found -> return found
+            Nothing    -> throwError (NameNotFound name (Path (currentFunction context) (map fst (locals context))))
+
+    enterScope action = do
+        modifyM (field @"locals") (prepend (0, Map.empty))
+        result    <- action
+        newLocals <- modifyM (field @"locals") (assert . tail)
+        case newLocals of
+            (scopeID, names) : rest -> do
+                assertM (scopeID >= 0)
+                setM (field @"locals") ((scopeID + 1, names) : rest)
+                return result
+            [] -> do
+                return result
+
+    bindName info name = do
+        context <- getState
+        case (locals context) of
+            [] -> bug "Attempted to bind a name when not in a scope!"
+            (scopeID, names) : rest -> do
+                when (Map.member name names) $ do
+                    throwError (NameConflict name (Path (currentFunction context) (map fst (locals context))))
+                setM (field @"locals") ((scopeID, Map.insert name info names) : rest)
+                return NameWith { name = Name LocalName { path = Path { function = currentFunction context, scope = map fst rest }, givenName = name }, info }
+
+
+
+------------------------------------------------------------------------ validation
 
 data ValidationError info
     = NotInScope   !Name
