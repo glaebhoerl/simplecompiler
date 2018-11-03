@@ -98,7 +98,7 @@ getTypeOfName (NameWith name info) = do
     case haveType of
         Just type' -> return type'
         Nothing -> do
-            type' <- inferExpression (Name.initializer info)
+            type' <- inferExpression todo -- TODO just rely on recordType instead
             recordType name type'
             return type'
 
@@ -118,7 +118,7 @@ checkStatement = \case
         type' <- inferExpression expr
         recordType (Name.name name) type'
     AST.Assign name expr -> do
-        when ((Name.bindingType (Name.info name)) != AST.Var) $ do
+        when (Name.info name != AST.Var) $ do
             reportError AssignToLet
         nameType <- getTypeOfName name
         checkExpression nameType expr

@@ -308,7 +308,7 @@ newArgumentIDs (Parameters argTypes) = do
 instance TranslateM Translate where
     translateName :: AST.TypedName -> Translate (Name Expression)
     translateName (AST.NameWith name ty) = do
-        return (Name (ASTName name) (translatedType ty) (AST.givenName name))
+        return (Name (ASTName name) (translatedType ty) (AST.unqualifiedName name))
         where translatedType = \case
                 AST.Bool -> Bool
                 AST.Int  -> Int
@@ -610,7 +610,7 @@ letId   defOrUse name = let info = P.IdentInfo (identText (ident name)) defOrUse
 
 identText :: ID node -> Text
 identText = \case
-    ASTName n -> AST.givenName n
+    ASTName n -> AST.unqualifiedName n
     LetID   i -> showText i
     BlockID i -> showText i
     Return    -> "return" -- FIXME tag as P.Keyword!

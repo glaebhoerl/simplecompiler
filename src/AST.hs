@@ -104,8 +104,8 @@ precedenceGroups = assert (justIf isWellFormed listOfGroups) where
          map LogicalOperator    [Or]]
 
 data BinaryOperationList
-    = SingleExpression (Expression Text)
-    | BinaryOperation  (Expression Text) BinaryOperator BinaryOperationList
+    = SingleExpression !(Expression Text)
+    | BinaryOperation  !(Expression Text) !BinaryOperator !BinaryOperationList
     deriving Show
 
 resolvePrecedences :: BinaryOperationList -> Expression Text

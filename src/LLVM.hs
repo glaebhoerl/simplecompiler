@@ -101,7 +101,7 @@ translatedID :: IR.ID node -> L.Name
 translatedID = \case
     IR.LetID   num  -> L.mkName (show num)
     IR.BlockID num  -> L.mkName (show num)
-    IR.ASTName name -> L.mkName (intercalate "." (map show (Name.path name)) ++ "." ++ (textToString (Name.givenName name)))
+    IR.ASTName name -> L.mkName (textToString (Name.qualifiedName name))
     IR.Return       -> "return"
 
 alloca :: LLVM m => IR.Name IR.Expression -> m ()
