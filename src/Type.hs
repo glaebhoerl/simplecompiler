@@ -10,20 +10,9 @@ import AST (AST)
 import qualified Name
 import Name (Name, NameWith (NameWith), ResolvedName)
 
--- TODO more info in here
--- such as the context
--- wonder how to formulate that...
-data Error
-    = TypeError (TypeMismatch (AST.Expression ResolvedName))
-    | AssignToLet
-    | LiteralOutOfRange
-    deriving (Generic, Show)
 
-data TypeMismatch node = TypeMismatch {
-    expectedType :: Type,
-    actualType   :: Type,
-    expression   :: node
-} deriving (Generic, Show)
+
+------------------------------------------------------------------------ types
 
 data Type
     = Int
@@ -33,6 +22,31 @@ data Type
 
 -- I think we won't really need the binding type or initializer expression after typechecking anyways?
 type TypedName = NameWith Type
+
+-- this duplicates some information from `inferExpression`, but it doesn't seem worth deduplicating atm
+typeOf :: AST.Expression TypedName -> Type
+typeOf = \case
+    AST.Named name ->
+        Name.info name
+    AST.NumberLiteral _ ->
+        Int
+    AST.TextLiteral _ ->
+        Text
+    AST.UnaryOperator op _ ->
+        case op of
+            Not    -> Bool
+            Negate -> Int
+    AST.BinaryOperator _ op _ ->
+        case op of
+            ArithmeticOperator _ -> Int
+            ComparisonOperator _ -> Bool
+            LogicalOperator    _ -> Bool
+    AST.Call _ _ ->
+        todo
+
+
+
+------------------------------------------------------------------------ pretty-printing
 
 instance AST.RenderName TypedName where
     renderName defOrUse (NameWith name type') = (if defOrUse == P.Definition then appendTypeAnnotation else id) (fmap setTypeInNote (AST.renderName defOrUse name))
@@ -46,24 +60,14 @@ instance AST.RenderName TypedName where
                   Bool -> P.Bool
                   Text -> P.Text
 
+
+
+------------------------------------------------------------------------ typechecker frontend
+
 class Monad m => TypeCheckM m where
     recordType  :: Name -> Type -> m ()
     lookupType  :: Name -> m (Maybe Type)
     reportError :: Error -> m ()
-
-newtype TypeCheck a = TypeCheck {
-    runTypeCheck :: StateT (Map Name Type) (Except Error) a
-} deriving (Functor, Applicative, Monad)
-
-instance TypeCheckM TypeCheck where
-    recordType name type' = TypeCheck $ do
-        liftM (assert . not . Map.member name) getState
-        modifyState (Map.insert name type')
-        return ()
-    lookupType name = TypeCheck $ do
-        liftM (Map.lookup name) getState
-    reportError err = TypeCheck $ do
-        throwError err
 
 inferExpression :: TypeCheckM m => AST.Expression ResolvedName -> m Type
 inferExpression = \case
@@ -145,32 +149,48 @@ checkStatement = \case
 checkFunction :: TypeCheckM m => AST.Function ResolvedName -> m ()
 checkFunction = todo
 
+
+
+------------------------------------------------------------------------ typechecker backend
+
+-- TODO more info in here
+-- such as the context
+-- wonder how to formulate that...
+data Error
+    = TypeError (TypeMismatch (AST.Expression ResolvedName))
+    | AssignToLet
+    | LiteralOutOfRange
+    deriving (Generic, Show)
+
+data TypeMismatch node = TypeMismatch {
+    expectedType :: Type,
+    actualType   :: Type,
+    expression   :: node
+} deriving (Generic, Show)
+
+newtype TypeCheck a = TypeCheck {
+    runTypeCheck :: StateT (Map Name Type) (Except Error) a
+} deriving (Functor, Applicative, Monad)
+
 checkTypes :: AST ResolvedName -> Either Error (AST TypedName)
 checkTypes ast = do
     nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkFunction) ast
     let makeNameTyped (NameWith name _) = NameWith name (assert (Map.lookup name nameToTypeMap))
     return ((map (fmap makeNameTyped)) ast)
 
--- this duplicates some information from `inferExpression`, but it doesn't seem worth deduplicating atm
-typeOf :: AST.Expression TypedName -> Type
-typeOf = \case
-    AST.Named name ->
-        Name.info name
-    AST.NumberLiteral _ ->
-        Int
-    AST.TextLiteral _ ->
-        Text
-    AST.UnaryOperator op _ ->
-        case op of
-            Not    -> Bool
-            Negate -> Int
-    AST.BinaryOperator _ op _ ->
-        case op of
-            ArithmeticOperator _ -> Int
-            ComparisonOperator _ -> Bool
-            LogicalOperator    _ -> Bool
-    AST.Call _ _ ->
-        todo
+instance TypeCheckM TypeCheck where
+    recordType name type' = TypeCheck $ do
+        liftM (assert . not . Map.member name) getState
+        modifyState (Map.insert name type')
+        return ()
+    lookupType name = TypeCheck $ do
+        liftM (Map.lookup name) getState
+    reportError err = TypeCheck $ do
+        throwError err
+
+
+
+------------------------------------------------------------------------ validation
 
 type ValidationError = TypeMismatch (AST.Expression TypedName)
 
