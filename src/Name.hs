@@ -252,24 +252,26 @@ data ValidationError info
 --  * The `path` component of the name is correct. This is regarded as an implementation detail, subject to change.
 --  * The binding types are stored correctly. This is an unfortunate limitation of being polymorphic over the `info` type.
 validate :: Eq info => AST (NameWith info) -> Either (ValidationError info) ()
-validate = runExcept . evalStateT [] . mapM_ validateFunction where
-    validateFunction f = do
-        validateBlock (AST.body f)
-        todo
+validate = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validateFunction where
+    builtinNames = Map.fromList (zip (map BuiltinName (enumerate @BuiltinName)) (repeat Nothing))
+    validateFunction function = do
+        mapM_ validateName (map AST.argumentType (AST.arguments function))
+        mapM_ validateName (AST.returns function)
+        recordName (AST.functionName function)
+        modifyState (prepend Map.empty)
+        mapM_ recordName (map AST.argumentName (AST.arguments function))
+        validateBlock (AST.body function)
+        modifyState (assert . tail)
+        return ()
     validateBlock block = do
         modifyState (prepend Map.empty)
         mapM_ validateStatement (AST.statements block)
         modifyState (assert . tail)
         return ()
     validateStatement = \case
-        AST.Binding _ (NameWith name info) expr -> do
+        AST.Binding _ name expr -> do
             validateExpression expr
-            doModifyState $ \context -> do
-                let scope = assert (head context)
-                when (Map.member name scope) $ do
-                    throwError (Redefined name)
-                return (prepend (Map.insert name info scope) (assert (tail context)))
-            return ()
+            recordName name
         AST.Assign n expr -> do
             validateExpression expr
             validateName n
@@ -302,12 +304,22 @@ validate = runExcept . evalStateT [] . mapM_ validateFunction where
         AST.TextLiteral _ -> do
             return ()
         AST.Call name exprs -> do
-            todo
+            validateName name
+            mapM_ validateExpression exprs
     validateName (NameWith name info1) = do
         context <- getState
         case Map.lookup name (Map.unions context) of
             Nothing -> do
                 throwError (NotInScope name)
-            Just info2 -> do
+            Just Nothing -> do
+                return () -- builtin names have no stored info (TODO?)
+            Just (Just info2) -> do
                 when (info1 != info2) $ do
                     throwError (InfoMismatch (NameWith name info1) (NameWith name info2))
+    recordName (NameWith name info) = do
+        doModifyState $ \context -> do
+            let scope = assert (head context)
+            when (Map.member name scope) $ do
+                throwError (Redefined name)
+            return (prepend (Map.insert name (Just info) scope) (assert (tail context)))
+        return ()
