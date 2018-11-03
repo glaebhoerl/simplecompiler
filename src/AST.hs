@@ -232,35 +232,28 @@ parse tokens = case E.fullParses (E.parser (liftM oneOrMore functionGrammar)) to
 
 ----------------------------------------------------------------------------- pretty-printing
 
-nameText :: P.IdentSort -> P.DefinitionOrUse -> Text -> P.Document
-nameText defOrUse sort name = P.note (P.Identifier (P.IdentInfo name sort defOrUse Nothing)) (P.pretty name)
-
-builtinName :: Text -> P.Document
-builtinName = nameText P.BuiltinName P.Use
-
 renderBlock :: RenderName name => Block name -> P.Document
 renderBlock block = P.braces (P.nest 4 (P.hardline ++ P.render block) ++ P.hardline)
 
 class RenderName name where
-    renderName :: name -> P.DefinitionOrUse -> P.Document
+    renderName :: P.DefinitionOrUse -> name -> P.Document
 
 instance RenderName Text where
-    renderName = flip (nameText P.UnresolvedName)
+    renderName defOrUse name = P.note (P.Identifier (P.IdentInfo name defOrUse P.UnresolvedName Nothing)) (P.pretty name)
 
 instance RenderName name => P.Render (Expression name) where
     render = \case
-        Named          name           -> renderName name P.Use
+        Named          name           -> renderName P.Use name
+        Call           name args      -> renderName P.Use name ++ P.parens (P.hsep (P.punctuate "," (map P.render args)))
         NumberLiteral  number         -> P.number number
         TextLiteral    text           -> P.string text
         UnaryOperator  op expr        -> P.unaryOperator op ++ P.render expr
         BinaryOperator expr1 op expr2 -> P.render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ P.render expr2
-        --Ask            expr           -> builtinName "ask" ++ P.parens (P.render expr)
-        Call           name args      -> todo name args
 
 instance RenderName name => P.Render (Statement name) where
     render = \case
-        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ renderName name P.Definition ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
-        Assign     name expr          -> renderName name P.Use ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
+        Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ renderName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
+        Assign     name expr          -> renderName P.Use name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
         IfThen     expr block         -> P.keyword "if" ++ " " ++ P.render expr ++ " " ++ renderBlock block
         IfThenElse expr block1 block2 -> P.render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
         Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block
@@ -273,7 +266,11 @@ instance RenderName name => P.Render (Block name) where
     render (Block statements) = mconcat (P.punctuate P.hardline (map P.render statements))
 
 instance RenderName name => P.Render (Argument name) where
-    render = todo
+    render Argument { argumentName, argumentType } = renderName P.Definition argumentName ++ P.colon ++ " " ++ renderName P.Use argumentType
 
 instance RenderName name => P.Render (Function name) where
-    render = todo
+    render Function { functionName, arguments, returns, body } = renderedHead ++ renderedArguments ++ renderedReturns ++ renderedBody where
+        renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
+        renderedArguments = P.parens (P.hsep (P.punctuate "," (map P.render arguments)))
+        renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ renderName P.Use returnType) returns
+        renderedBody      = renderBlock body

@@ -148,6 +148,7 @@ oneOf :: Alternative f => [f a] -> f a
 oneOf = foldl' (<|>) empty
 
 -- sometimes we want the Maybe version, sometimes we want the list version...
+-- (`liftA1 head (zeroOrOne x)` recovers the Maybe version)
 zeroOrOne :: Alternative f => f a -> f [a]
 zeroOrOne a = liftA0 [] <|> liftA1 single a
 
