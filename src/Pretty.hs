@@ -91,6 +91,7 @@ data Info
     | Identifier !IdentInfo
     deriving (Generic, Eq, Show)
 
+-- TODO add function?
 data Type
     = Int
     | Bool
@@ -113,7 +114,7 @@ data IdentSort
     = UnresolvedName
     | BuiltinName
     | LetName
-    | BlockName
+    | BlockName -- or should this become a LetName of function type?
     | TypeName
     deriving (Generic, Eq, Show)
 

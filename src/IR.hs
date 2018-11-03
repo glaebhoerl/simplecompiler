@@ -182,10 +182,11 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         value2 <- translateTemporary expr2
         name   <- emitNamedLet (BinaryOperator value1 op value2)
         return (Named name)
-    AST.Ask expr -> do
-        value <- translateTemporary expr
-        name  <- emitNamedLet (Ask value)
-        return (Named name)
+    AST.Call function exprs -> do
+        --value <- translateTemporary expr
+        --name  <- emitNamedLet (Ask value)
+        --return (Named name)
+        return todo
 
 translateStatement :: TranslateM m => AST.Statement AST.TypedName -> m ()
 translateStatement = \case
@@ -234,12 +235,8 @@ translateStatement = \case
         emitTransfer (Jump (Target returnToCaller [fromMaybe (Literal (Number 0)) maybeValue]))
     AST.Break -> do
         todo -- TODO
-    AST.Say expr -> do
-        value <- translateTemporary expr
-        emitStatement (Say value)
-    AST.Write expr -> do
-        value <- translateTemporary expr
-        emitStatement (Write value)
+    AST.Expression expr -> do
+        unused (translateTemporary expr)
 
 translateBlock :: TranslateM m => AST.Block AST.TypedName -> m ()
 translateBlock (AST.Block statements) = mapM_ translateStatement statements

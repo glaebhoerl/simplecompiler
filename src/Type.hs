@@ -35,7 +35,7 @@ data Type
 type TypedName = NameWith Type
 
 instance AST.RenderName TypedName where
-    renderName (NameWith name type') defOrUse = (if defOrUse == P.Definition then appendTypeAnnotation else id) (fmap setTypeInNote (AST.renderName name defOrUse))
+    renderName defOrUse (NameWith name type') = (if defOrUse == P.Definition then appendTypeAnnotation else id) (fmap setTypeInNote (AST.renderName defOrUse name))
         where appendTypeAnnotation binding = binding ++ P.colon ++ " " ++ renderedType
               renderedType = P.note (P.Identifier (P.IdentInfo typeName P.Use P.TypeName (Just prettyType))) (P.pretty typeName) where typeName = showText type'
               setTypeInNote = \case
@@ -89,9 +89,8 @@ inferExpression = \case
         checkExpression inType expr1
         checkExpression inType expr2
         return outType
-    AST.Ask expr -> do
-        checkExpression Text expr
-        return Int
+    AST.Call function expr -> do
+        return todo
 
 getTypeOfName :: TypeCheckM m => ResolvedName -> m Type
 getTypeOfName (NameWith name info) = do
@@ -125,32 +124,32 @@ checkStatement = \case
         checkExpression nameType expr
     AST.IfThen expr block -> do
         checkExpression Bool expr
-        mapM_ checkStatement (AST.body block)
+        mapM_ checkStatement (AST.statements block)
     AST.IfThenElse expr block1 block2 -> do
         checkExpression Bool expr
-        mapM_ checkStatement (AST.body block1)
-        mapM_ checkStatement (AST.body block2)
+        mapM_ checkStatement (AST.statements block1)
+        mapM_ checkStatement (AST.statements block2)
     AST.Forever block -> do
-        mapM_ checkStatement (AST.body block)
+        mapM_ checkStatement (AST.statements block)
     AST.While expr block -> do
         checkExpression Bool expr
-        mapM_ checkStatement (AST.body block)
+        mapM_ checkStatement (AST.statements block)
     AST.Return maybeExpr -> do
         mapM_ (checkExpression Int) maybeExpr
     AST.Break -> do
         -- TODO we should check that we're in a loop!!
         return ()
-    AST.Say expr -> do
-        checkExpression Text expr
-        return ()
-    AST.Write expr -> do
-        checkExpression Int expr
+    AST.Expression expr -> do
+        unused (inferExpression expr)
+
+checkFunction :: TypeCheckM m => AST.Function ResolvedName -> m ()
+checkFunction = todo
 
 checkTypes :: AST ResolvedName -> Either Error (AST TypedName)
 checkTypes ast = do
-    nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkStatement . AST.body) ast
+    nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkFunction) ast
     let makeNameTyped (NameWith name _) = NameWith name (assert (Map.lookup name nameToTypeMap))
-    return (fmap makeNameTyped ast)
+    return ((map (fmap makeNameTyped)) ast)
 
 -- this duplicates some information from `inferExpression`, but it doesn't seem worth deduplicating atm
 typeOf :: AST.Expression TypedName -> Type
@@ -170,8 +169,8 @@ typeOf = \case
             ArithmeticOperator _ -> Int
             ComparisonOperator _ -> Bool
             LogicalOperator    _ -> Bool
-    AST.Ask _ ->
-        Int
+    AST.Call _ _ ->
+        todo
 
 type ValidationError = TypeMismatch (AST.Expression TypedName)
 
@@ -181,8 +180,9 @@ type ValidationError = TypeMismatch (AST.Expression TypedName)
 --  * Names are actually in scope, and the info stored in `Name`s is consistent. Use `Name.validate` for that!
 --  * Literals are within range, and assignments match their binding types.
 validate :: AST TypedName -> Either ValidationError ()
-validate = runExcept . validateBlock where
-    validateBlock = mapM_ validateStatement . AST.body
+validate = runExcept . mapM_ validateFunction where
+    validateFunction f = validateBlock (AST.body f) -- TODO
+    validateBlock = mapM_ validateStatement . AST.statements
     validateStatement = \case
         AST.Binding _ (NameWith _ ty) expr -> do
             check ty expr
@@ -203,10 +203,8 @@ validate = runExcept . validateBlock where
             mapM_ (check Int) maybeExpr
         AST.Break -> do
             return ()
-        AST.Say expr -> do
-            check Text expr
-        AST.Write expr -> do
-            check Int expr
+        AST.Expression expr -> do
+            check todo expr
     validateExpression = \case
         AST.UnaryOperator op expr -> do
             check opExpectsType expr where
@@ -225,8 +223,8 @@ validate = runExcept . validateBlock where
             return ()
         AST.TextLiteral _ -> do
             return ()
-        AST.Ask expr -> do
-            check Text expr
+        AST.Call function exprs -> do
+            todo function exprs
     check expectedType expr = do
         when (typeOf expr != expectedType) $ do
             throwError (TypeMismatch expectedType (typeOf expr) expr)

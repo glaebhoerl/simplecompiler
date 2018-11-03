@@ -90,7 +90,7 @@ types = do
 
 ir :: Command IR.Block
 ir = do
-    result <- liftM IR.translate types
+    result <- liftM IR.translate (todo types)
     _      <- try (mapLeft prettyShow (IR.validate result))
     opt    <- liftM optimize arguments
     if opt

@@ -35,13 +35,13 @@ data Info = Info {
 type ResolvedName = NameWith Info
 
 instance AST.RenderName Name where
-    renderName (Name path given) defOrUse = renderedPath ++ renderedGiven
+    renderName defOrUse (Name path given) = renderedPath ++ renderedGiven
         where pathText      = foldr (\a b -> showText a ++ "." ++ b) "" path
               renderedPath  = P.note (P.Identifier (P.IdentInfo pathText defOrUse P.BlockName Nothing)) (P.pretty pathText)
               renderedGiven = P.note (P.Identifier (P.IdentInfo given    defOrUse P.LetName   Nothing)) (P.pretty given)
 
 instance AST.RenderName ResolvedName where
-    renderName (NameWith name _) = AST.renderName name
+    renderName defOrUse (NameWith name _) = AST.renderName defOrUse name
 
 data Error
     = NameNotFound !Text !Path
@@ -101,10 +101,13 @@ instance NameResolveM NameResolve where
                 return (NameWith (Name (map fst rest) name) info)
 
 resolveNames :: AST Text -> Either Error (AST ResolvedName)
-resolveNames = runExcept . evalStateT [] . runNameResolve . resolveNamesIn
+resolveNames = runExcept . evalStateT [] . runNameResolve . mapM resolveNamesIn
 
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node Text -> m (node ResolvedName)
+
+instance ResolveNamesIn AST.Function where
+    resolveNamesIn = todo
 
 instance ResolveNamesIn AST.Block where
     resolveNamesIn (AST.Block body) = do
@@ -159,10 +162,13 @@ data ValidationError info
 --  * The `path` component of the name is correct. This is regarded as an implementation detail, subject to change.
 --  * The binding types are stored correctly. This is an unfortunate limitation of being polymorphic over the `info` type.
 validate :: Eq info => AST (NameWith info) -> Either (ValidationError info) ()
-validate = runExcept . evalStateT [] . validateBlock where
+validate = runExcept . evalStateT [] . mapM_ validateFunction where
+    validateFunction f = do
+        validateBlock (AST.body f)
+        todo
     validateBlock block = do
         modifyState (prepend Map.empty)
-        mapM_ validateStatement (AST.body block)
+        mapM_ validateStatement (AST.statements block)
         modifyState (assert . tail)
         return ()
     validateStatement = \case
@@ -192,9 +198,7 @@ validate = runExcept . evalStateT [] . validateBlock where
             mapM_ validateExpression maybeExpr
         AST.Break -> do
             return ()
-        AST.Say expr -> do
-            validateExpression expr
-        AST.Write expr -> do
+        AST.Expression expr -> do
             validateExpression expr
     validateExpression = \case
         AST.Named n -> do
@@ -207,8 +211,8 @@ validate = runExcept . evalStateT [] . validateBlock where
             return ()
         AST.TextLiteral _ -> do
             return ()
-        AST.Ask expr -> do
-            validateExpression expr
+        AST.Call name exprs -> do
+            todo
     validateName (NameWith name info1) = do
         context <- getState
         case Map.lookup name (Map.unions context) of

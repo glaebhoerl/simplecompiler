@@ -1,6 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
-module AST (Expression (..), BindingType (..), Statement (..), Block (..), AST, Error (..), parse, RenderName (..)) where
+module AST (Expression (..), BindingType (..), Statement (..), Block (..), Argument (..), Function (..), AST, Error (..), parse, RenderName (..)) where
 
 import MyPrelude
 
@@ -274,3 +274,6 @@ instance RenderName name => P.Render (Function name) where
         renderedArguments = P.parens (P.hsep (P.punctuate "," (map P.render arguments)))
         renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ renderName P.Use returnType) returns
         renderedBody      = renderBlock body
+
+instance RenderName name => P.Render (AST name) where
+    render = mconcat . P.punctuate P.hardline . map P.render
