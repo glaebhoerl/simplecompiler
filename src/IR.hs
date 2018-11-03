@@ -310,9 +310,10 @@ instance TranslateM Translate where
     translateName (AST.NameWith name ty) = do
         return (Name (ASTName name) (translatedType ty) (AST.unqualifiedName name))
         where translatedType = \case
-                AST.Bool -> Bool
-                AST.Int  -> Int
-                AST.Text -> Text
+                AST.SmallType AST.Bool -> Bool
+                AST.SmallType AST.Int  -> Int
+                AST.SmallType AST.Text -> Text
+                AST.Type               -> bug "Use of typename as local"
 
     emitStatement :: Statement -> Translate ()
     emitStatement statement = do

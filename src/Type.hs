@@ -1,4 +1,4 @@
-module Type (Type (..), TypedName, Error (..), TypeMismatch (..), checkTypes, typeOf, ValidationError, validate) where
+module Type (LargeType (..), Type (..), TypedName, Error (..), TypeMismatch (..), checkTypes, typeOf, ValidationError, validate) where
 
 import MyPrelude
 
@@ -14,20 +14,25 @@ import Name (Name, NameWith (NameWith), ResolvedName)
 
 ------------------------------------------------------------------------ types
 
+data LargeType
+    = Type
+    | SmallType Type
+    deriving (Generic, Eq, Show)
+
 data Type
     = Int
     | Bool
     | Text
+    | Unit
+    | Function [Type] Type
     deriving (Generic, Eq, Show)
 
--- I think we won't really need the binding type or initializer expression after typechecking anyways?
-type TypedName = NameWith Type
+type TypedName = NameWith LargeType
 
--- this duplicates some information from `inferExpression`, but it doesn't seem worth deduplicating atm
 typeOf :: AST.Expression TypedName -> Type
 typeOf = \case
     AST.Named name ->
-        Name.info name
+        assert (getWhen (constructor @"SmallType") (Name.info name))
     AST.NumberLiteral _ ->
         Int
     AST.TextLiteral _ ->
@@ -41,8 +46,8 @@ typeOf = \case
             ArithmeticOperator _ -> Int
             ComparisonOperator _ -> Bool
             LogicalOperator    _ -> Bool
-    AST.Call _ _ ->
-        todo
+    AST.Call name _ ->
+        snd (assert (getWhen (constructor @"SmallType" . constructor @"Function") (Name.info name)))
 
 
 
@@ -55,24 +60,49 @@ instance AST.RenderName TypedName where
               setTypeInNote = \case
                    P.Identifier info -> P.Identifier (info { P.identType = Just prettyType })
                    _                 -> bug "Pretty-printing annotation on ResolvedName was not Identifier"
-              prettyType = case type' of
-                  Int  -> P.Int
-                  Bool -> P.Bool
-                  Text -> P.Text
+              prettyType = case assert (getWhen (constructor @"SmallType") type') of
+                  Int          -> P.Int
+                  Bool         -> P.Bool
+                  Text         -> P.Text
+                  Unit         -> todo
+                  Function _ _ -> todo
 
 
 
 ------------------------------------------------------------------------ typechecker frontend
 
+-- TODO more info in here
+-- such as the context
+-- wonder how to formulate that...
+data Error
+    = TypeError (TypeMismatch (AST.Expression ResolvedName))
+    | CallOfNonFunction -- TODO
+    | WrongNumberOfArguments -- TODO
+    | UseOfTypeAsExpression -- TODO
+    | UseOfExpressionAsType -- TODO
+    | AssignToLet
+    | LiteralOutOfRange
+    deriving (Generic, Show)
+
+data TypeMismatch node = TypeMismatch {
+    expectedType :: Type,
+    actualType   :: Type,
+    expression   :: node
+} deriving (Generic, Show)
+
 class Monad m => TypeCheckM m where
-    recordType  :: Name -> Type -> m ()
-    lookupType  :: Name -> m (Maybe Type)
-    reportError :: Error -> m ()
+    recordType  :: ResolvedName -> Type -> m ()
+    lookupType  :: ResolvedName         -> m LargeType
+    nameAsType  :: ResolvedName         -> m Type
+    reportError :: Error                -> m a
 
 inferExpression :: TypeCheckM m => AST.Expression ResolvedName -> m Type
 inferExpression = \case
     AST.Named name -> do
-        getTypeOfName name
+        typeOfName <- lookupType name
+        case typeOfName of
+            Type                -> reportError UseOfTypeAsExpression
+            SmallType smallType -> return smallType
     AST.NumberLiteral int -> do
         when (int > fromIntegral (maxBound :: Int64)) $ do
             reportError LiteralOutOfRange
@@ -93,18 +123,18 @@ inferExpression = \case
         checkExpression inType expr1
         checkExpression inType expr2
         return outType
-    AST.Call function expr -> do
-        return todo
-
-getTypeOfName :: TypeCheckM m => ResolvedName -> m Type
-getTypeOfName (NameWith name info) = do
-    haveType <- lookupType name
-    case haveType of
-        Just type' -> return type'
-        Nothing -> do
-            type' <- inferExpression todo -- TODO just rely on recordType instead
-            recordType name type'
-            return type'
+    AST.Call function arguments -> do
+        functionType <- lookupType function
+        case functionType of
+            SmallType (Function argumentTypes returnType) -> do
+                when (length argumentTypes != length arguments) $ do
+                    reportError WrongNumberOfArguments
+                zipWithM checkExpression argumentTypes arguments
+                return returnType
+            SmallType _ -> do
+                reportError CallOfNonFunction
+            Type -> do
+                reportError UseOfTypeAsExpression
 
 checkExpression :: TypeCheckM m => Type -> AST.Expression ResolvedName -> m ()
 checkExpression expected expr = do
@@ -119,13 +149,15 @@ checkExpression expected expr = do
 checkStatement :: TypeCheckM m => AST.Statement ResolvedName -> m ()
 checkStatement = \case
     AST.Binding _ name expr -> do
-        type' <- inferExpression expr
-        recordType (Name.name name) type'
+        inferredType <- inferExpression expr
+        recordType name inferredType
     AST.Assign name expr -> do
         when (Name.info name != AST.Var) $ do
             reportError AssignToLet
-        nameType <- getTypeOfName name
-        checkExpression nameType expr
+        nameType <- lookupType name
+        case nameType of
+            SmallType smallType -> checkExpression smallType expr
+            Type                -> reportError UseOfTypeAsExpression
     AST.IfThen expr block -> do
         checkExpression Bool expr
         mapM_ checkStatement (AST.statements block)
@@ -139,7 +171,7 @@ checkStatement = \case
         checkExpression Bool expr
         mapM_ checkStatement (AST.statements block)
     AST.Return maybeExpr -> do
-        mapM_ (checkExpression Int) maybeExpr
+        mapM_ (checkExpression Int) maybeExpr -- TODO check against return type!!
     AST.Break -> do
         -- TODO we should check that we're in a loop!!
         return ()
@@ -147,46 +179,61 @@ checkStatement = \case
         unused (inferExpression expr)
 
 checkFunction :: TypeCheckM m => AST.Function ResolvedName -> m ()
-checkFunction = todo
+checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
+    argumentTypes <- forM arguments $ \AST.Argument { AST.argumentName, AST.argumentType } -> do
+        resolvedType <- nameAsType argumentType
+        recordType argumentName resolvedType
+        return resolvedType
+    returnType <- mapM nameAsType returns
+    recordType functionName (Function argumentTypes (fromMaybe Unit returnType))
+    mapM_ checkStatement (AST.statements body)
 
 
 
 ------------------------------------------------------------------------ typechecker backend
 
--- TODO more info in here
--- such as the context
--- wonder how to formulate that...
-data Error
-    = TypeError (TypeMismatch (AST.Expression ResolvedName))
-    | AssignToLet
-    | LiteralOutOfRange
-    deriving (Generic, Show)
-
-data TypeMismatch node = TypeMismatch {
-    expectedType :: Type,
-    actualType   :: Type,
-    expression   :: node
-} deriving (Generic, Show)
-
 newtype TypeCheck a = TypeCheck {
     runTypeCheck :: StateT (Map Name Type) (Except Error) a
-} deriving (Functor, Applicative, Monad)
+} deriving (Functor, Applicative, Monad, MonadState (Map Name Type), MonadError Error)
 
 checkTypes :: AST ResolvedName -> Either Error (AST TypedName)
 checkTypes ast = do
     nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkFunction) ast
-    let makeNameTyped (NameWith name _) = NameWith name (assert (Map.lookup name nameToTypeMap))
+    let makeNameTyped (NameWith name _) = NameWith name (SmallType (assert (Map.lookup name nameToTypeMap)))
     return ((map (fmap makeNameTyped)) ast)
 
 instance TypeCheckM TypeCheck where
-    recordType name type' = TypeCheck $ do
-        liftM (assert . not . Map.member name) getState
-        modifyState (Map.insert name type')
+    recordType name typeOfName = do
+        doModifyState $ \typeMap -> do
+            assertM (not (Map.member (Name.name name) typeMap))
+            return (Map.insert (Name.name name) typeOfName typeMap)
         return ()
-    lookupType name = TypeCheck $ do
-        liftM (Map.lookup name) getState
-    reportError err = TypeCheck $ do
+    lookupType = \case
+        NameWith (Name.BuiltinName builtin) _ -> do
+            return (typeOfBuiltin builtin)
+        NameWith otherName                  _ -> do
+            liftM (SmallType . assert . Map.lookup otherName) getState
+    nameAsType = \case
+        NameWith (Name.BuiltinName builtin) _ | Just builtinType <- builtinAsType builtin -> return builtinType
+        _ -> reportError UseOfExpressionAsType
+    reportError err = do
         throwError err
+
+typeOfBuiltin :: Name.BuiltinName -> LargeType
+typeOfBuiltin = \case
+    Name.Builtin_Int   -> Type
+    Name.Builtin_Bool  -> Type
+    Name.Builtin_Text  -> Type
+    Name.Builtin_ask   -> SmallType (Function [Text] Int)
+    Name.Builtin_say   -> SmallType (Function [Text] Unit)
+    Name.Builtin_write -> SmallType (Function [Int]  Unit)
+
+builtinAsType :: Name.BuiltinName -> Maybe Type
+builtinAsType = \case
+    Name.Builtin_Int   -> Just Int
+    Name.Builtin_Bool  -> Just Bool
+    Name.Builtin_Text  -> Just Text
+    _                  -> Nothing
 
 
 
@@ -196,10 +243,13 @@ type ValidationError = TypeMismatch (AST.Expression TypedName)
 
 -- This checks that:
 --  * The AST is locally well-typed at each point, based on the types stored within `Name`s.
+-- TODO check type annotations also
 -- This does NOT check that:
 --  * Names are actually in scope, and the info stored in `Name`s is consistent. Use `Name.validate` for that!
 --  * Literals are within range, and assignments match their binding types.
 validate :: AST TypedName -> Either ValidationError ()
+validate _ = Right () -- TODO!!
+{-
 validate = runExcept . mapM_ validateFunction where
     validateFunction f = validateBlock (AST.body f) -- TODO
     validateBlock = mapM_ validateStatement . AST.statements
@@ -249,3 +299,4 @@ validate = runExcept . mapM_ validateFunction where
         when (typeOf expr != expectedType) $ do
             throwError (TypeMismatch expectedType (typeOf expr) expr)
         validateExpression expr
+-}
