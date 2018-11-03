@@ -82,7 +82,7 @@ bracketed kind inner = do
     return output
 
 separatedBy :: [T.Token] -> Prod r output -> Prod r [output]
-separatedBy tokens element = oneOf [empty, liftA2 prepend element (zeroOrMore ((E.list tokens) `followedBy` element))]
+separatedBy tokens element = oneOf [pure [], liftA2 prepend element (zeroOrMore ((E.list tokens) `followedBy` element))]
 
 followedBy :: Prod r a -> Prod r b -> Prod r b
 followedBy = (*>)
@@ -273,7 +273,7 @@ instance RenderName name => P.Render (Function name) where
         renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
         renderedArguments = P.parens (P.hsep (P.punctuate "," (map P.render arguments)))
         renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ renderName P.Use returnType) returns
-        renderedBody      = renderBlock body
+        renderedBody      = P.hardline ++ renderBlock body
 
 instance RenderName name => P.Render (AST name) where
     render = mconcat . P.punctuate P.hardline . map P.render
