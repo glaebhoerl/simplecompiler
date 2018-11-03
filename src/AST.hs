@@ -9,6 +9,10 @@ import qualified Text.Earley as E
 import qualified Pretty as P
 import qualified Token  as T
 
+
+
+----------------------------------------------------------------------------- types
+
 data Expression name
     = Named          !name
     | Call           !name ![Expression name]
@@ -36,7 +40,7 @@ data Statement name
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 newtype Block name = Block {
-    body :: [Statement name]
+    statements :: [Statement name]
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Argument name = Argument {
@@ -45,11 +49,16 @@ data Argument name = Argument {
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Function name = Function {
-    name         :: !name,
+    functionName :: !name,
     arguments    :: ![Argument name],
-    returnType   :: !(Maybe name),
-    functionBody :: !(Block name)
+    returns      :: !(Maybe name),
+    body         :: !(Block name)
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
+
+
+
+
+----------------------------------------------------------------------------- parsing
 
 type Expected = Text
 
@@ -127,7 +136,7 @@ expressionGrammar = mdo
     binaries <- ruleCases [liftA3 BinaryOperation  unary (tokenConstructor @"BinaryOperator") binaries,
                            liftA1 SingleExpression unary]
 
-    let expression = fmap resolvePrecedences binaries
+    let expression = liftA1 resolvePrecedences binaries
 
     return expression
 
@@ -183,19 +192,9 @@ blockGrammar = mdo
         token T.Semicolon
         return (Expression expr)
     -----------------------------------------------------
-    oneStatement <- E.rule $ oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement]
-    moreStatements <- E.rule $ do
-        first <- oneStatement
-        --_     <- oneOrMore (token T.Semicolon)
-        rest  <- oneOrMoreStatements
-        return (first : rest)
-    oneOrMoreStatements <- E.rule (oneOf [liftA1 single oneStatement, moreStatements])
-    -- FIXME: this doesn't accept empty blocks but rn idgaf
-    statements <- E.rule $ do
-        s <- oneOrMoreStatements
-        return s
-    block <- E.rule (liftA1 Block (bracketed T.Curly statements))
-    return (liftA1 Block statements)
+    statement <- E.rule (oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement])
+    block     <- E.rule (liftA1 Block (bracketed T.Curly (oneOrMore statement)))
+    return block
 
 functionGrammar :: Grammar r (Function Text)
 functionGrammar = do
@@ -207,11 +206,11 @@ functionGrammar = do
         return Argument { argumentName, argumentType }
     E.rule $ do
         keyword T.K_function
-        name         <- tokenConstructor @"Name"
+        functionName <- tokenConstructor @"Name"
         arguments    <- bracketed T.Round (separatedBy [T.Comma] argument)
-        returnType   <- fmap head (zeroOrOne (keyword T.K_returns `followedBy` tokenConstructor @"Name"))
-        functionBody <- block
-        return Function { name, arguments, returnType, functionBody }
+        returns      <- liftA1 head (zeroOrOne (keyword T.K_returns `followedBy` tokenConstructor @"Name"))
+        body         <- block
+        return Function { functionName, arguments, returns, body }
 
 
 type AST name = [Function name]
@@ -226,6 +225,12 @@ parse tokens = case E.fullParses (E.parser (liftM oneOrMore functionGrammar)) to
     ([], E.Report a b c) -> Left (Invalid a b c)
     ([one], _) -> Right one
     (more,  _) -> Left (Ambiguous more)
+
+
+
+
+
+----------------------------------------------------------------------------- pretty-printing
 
 nameText :: P.IdentSort -> P.DefinitionOrUse -> Text -> P.Document
 nameText defOrUse sort name = P.note (P.Identifier (P.IdentInfo name sort defOrUse Nothing)) (P.pretty name)
