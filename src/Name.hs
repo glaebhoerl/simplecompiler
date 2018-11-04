@@ -72,13 +72,13 @@ unqualifiedName = \case
 ------------------------------------------------------------------------ pretty-printing
 
 instance AST.RenderName Name where
-    renderName defOrUse = let makeName sort name = P.note (P.Identifier (P.IdentInfo name defOrUse sort Nothing)) (P.pretty name) in \case
+    renderName defOrUse = let makeName isBuiltin nameType name = P.note (P.Identifier (P.IdentInfo name defOrUse nameType isBuiltin)) (P.pretty name) in \case
         Name (LocalName Path { function, scope } given) -> renderedPath ++ renderedGiven
             where pathText      = function ++ "." ++ foldr (\a b -> showText a ++ "." ++ b) "" scope
-                  renderedPath  = makeName P.BlockName   pathText
-                  renderedGiven = makeName P.LetName     given
-        FunctionName name    ->   makeName P.LetName     name -- TODO or BlockName?
-        BuiltinName  builtin ->   makeName P.BuiltinName (unqualifiedName (BuiltinName builtin))
+                  renderedPath  = makeName False P.Block    pathText
+                  renderedGiven = makeName False P.Unit     given
+        FunctionName name    ->   makeName False P.Function name
+        BuiltinName  builtin ->   makeName True  P.Unknown  (unqualifiedName (BuiltinName builtin))
 
 instance AST.RenderName ResolvedName where
     renderName defOrUse (NameWith name _) = AST.renderName defOrUse name
@@ -198,7 +198,7 @@ lookupLocal name = \case
         Nothing           -> lookupLocal name parent
 
 lookupInContext :: Text -> Context -> Maybe ResolvedName
-lookupInContext givenName Context { functions, currentFunction, locals } = head (catMaybes [tryLocal, tryFunction, tryBuiltin]) where
+lookupInContext givenName Context { functions, currentFunction, locals } = oneOf [tryLocal, tryFunction, tryBuiltin] where
     tryLocal    = fmap makeLocalName (lookupLocal givenName locals) where
         makeLocalName (scope, info) = NameWith { name = Name LocalName { path = Path { function = currentFunction, scope }, givenName }, info }
     tryFunction = justIf (Set.member givenName functions) NameWith { name = FunctionName givenName, info = AST.Let }

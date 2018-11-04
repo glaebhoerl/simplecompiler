@@ -1,4 +1,4 @@
-module Pretty (Document, Info (..), IdentInfo (..), DefinitionOrUse (..), Type (..), IdentSort (..), Style (..), Color (..), Render (..), output,
+module Pretty (Document, Info (..), IdentInfo (..), DefinitionOrUse (..), Type (..), Style (..), Color (..), Render (..), output,
                note, keyword, dot, colon, semicolon, defineEquals, assignEquals, string, number, boolean, braces, parens, unaryOperator, binaryOperator,
                P.dquotes, P.hardline, P.hsep, P.nest, P.pretty, P.punctuate) where
 
@@ -37,7 +37,7 @@ string :: Text -> Document
 string = note (Literal Text) . P.dquotes . P.pretty
 
 number :: (P.Pretty a, Integral a) => a -> Document
-number = note (Literal Int) . P.pretty
+number = note (Literal Int) . P.pretty . (+ 0) -- just to silence the "unused constraint" warning
 
 boolean :: Bool -> Document
 boolean = note (Literal Bool) . bool "false" "true"
@@ -91,11 +91,15 @@ data Info
     | Identifier !IdentInfo
     deriving (Generic, Eq, Show)
 
--- TODO add function?
 data Type
     = Int
     | Bool
     | Text
+    | Unit
+    | Function
+    | Block
+    | Type
+    | Unknown
     deriving (Generic, Eq, Show)
 
 data DefinitionOrUse
@@ -106,17 +110,9 @@ data DefinitionOrUse
 data IdentInfo = IdentInfo {
     identName :: !Text,
     defOrUse  :: !DefinitionOrUse,
-    identSort :: !IdentSort,
-    identType :: !(Maybe Type)
+    identType :: !Type,
+    isBuiltin :: !Bool
 } deriving (Generic, Eq, Show)
-
-data IdentSort
-    = UnresolvedName
-    | BuiltinName
-    | LetName
-    | BlockName -- or should this become a LetName of function type?
-    | TypeName
-    deriving (Generic, Eq, Show)
 
 data Style = Style {
     color        :: !(Maybe Color),
@@ -151,13 +147,13 @@ defaultStyle = \case
     UserOperator     -> plain { color  = Just Yellow }
     Literal    _     -> plain { color  = Just Red }
     Sigil      info  -> plain { isUnderlined = defOrUse info == Definition }
-    Identifier info  -> plain { isUnderlined = defOrUse info == Definition, color = Just (identColorForSort (identSort info)) }
-        where identColorForSort = \case
-                  UnresolvedName -> Cyan
-                  BuiltinName    -> Yellow
-                  LetName        -> Magenta
-                  BlockName      -> Green
-                  TypeName       -> Cyan
+    Identifier info  -> plain { isUnderlined = defOrUse info == Definition, color = Just (identColorForType (identType info)) }
+        where identColorForType = \case
+                  Unknown  -> Cyan
+                  Function -> if isBuiltin info then Yellow else Green
+                  Block    -> Green
+                  Type     -> Cyan
+                  _        -> if isBuiltin info then Red else Magenta
 
 plain :: Style
 plain = Style Nothing False False False False

@@ -2,7 +2,8 @@ module Type (LargeType (..), Type (..), TypedName, Error (..), TypeMismatch (..)
 
 import MyPrelude
 
-import qualified Data.Map as Map
+import qualified Data.Map  as Map
+import qualified Data.Text as Text
 
 import qualified Pretty as P
 import qualified AST
@@ -16,7 +17,7 @@ import Name (Name, NameWith (NameWith), ResolvedName)
 
 data LargeType
     = Type
-    | SmallType Type
+    | SmallType !Type
     deriving (Generic, Eq, Show)
 
 data Type
@@ -24,15 +25,16 @@ data Type
     | Bool
     | Text
     | Unit
-    | Function [Type] Type
+    | Function ![Type] !Type
     deriving (Generic, Eq, Show)
 
 type TypedName = NameWith LargeType
 
 typeOf :: AST.Expression TypedName -> Type
 typeOf = \case
-    AST.Named name ->
-        assert (getWhen (constructor @"SmallType") (Name.info name))
+    AST.Named name -> case Name.info name of
+        SmallType smallType -> smallType
+        Type                -> bug "Expression of type Type in typed AST"
     AST.NumberLiteral _ ->
         Int
     AST.TextLiteral _ ->
@@ -46,26 +48,42 @@ typeOf = \case
             ArithmeticOperator _ -> Int
             ComparisonOperator _ -> Bool
             LogicalOperator    _ -> Bool
-    AST.Call name _ ->
-        snd (assert (getWhen (constructor @"SmallType" . constructor @"Function") (Name.info name)))
+    AST.Call name _ -> case Name.info name of
+        SmallType (Function _ returnType) -> returnType
+        SmallType _                       -> bug "Call of non-function in typed AST"
+        Type                              -> bug "Expression of type Type in typed AST"
 
 
 
 ------------------------------------------------------------------------ pretty-printing
 
+instance P.Render LargeType where
+    render ty = P.note (P.Identifier (P.IdentInfo (typeText ty) P.Use P.Type True)) (P.pretty (typeText ty)) where
+        typeText = \case
+            SmallType (Function argumentTypes returnType) ->
+                "function(" ++ Text.intercalate ", " (map (typeText . SmallType) argumentTypes) ++ ")" ++ case returnType of
+                    Unit      -> ""
+                    otherType -> " returns " ++ typeText (SmallType otherType)
+            SmallType otherType -> showText otherType
+            Type                -> "Type"
+
+instance P.Render Type where
+    render = P.render . SmallType
+
 instance AST.RenderName TypedName where
-    renderName defOrUse (NameWith name type') = (if defOrUse == P.Definition then appendTypeAnnotation else id) (fmap setTypeInNote (AST.renderName defOrUse name))
-        where appendTypeAnnotation binding = binding ++ P.colon ++ " " ++ renderedType
-              renderedType = P.note (P.Identifier (P.IdentInfo typeName P.Use P.TypeName (Just prettyType))) (P.pretty typeName) where typeName = showText type'
+    renderName defOrUse (NameWith name ty) = maybeAppendTypeAnnotation (fmap setTypeInNote (AST.renderName defOrUse name))
+        where maybeAppendTypeAnnotation binding = binding ++ (if defOrUse == P.Definition then (P.colon ++ " " ++ P.render ty) else "")
               setTypeInNote = \case
-                   P.Identifier info -> P.Identifier (info { P.identType = Just prettyType })
+                   P.Identifier info -> P.Identifier (info { P.identType })
                    _                 -> bug "Pretty-printing annotation on ResolvedName was not Identifier"
-              prettyType = case assert (getWhen (constructor @"SmallType") type') of
-                  Int          -> P.Int
-                  Bool         -> P.Bool
-                  Text         -> P.Text
-                  Unit         -> todo
-                  Function _ _ -> todo
+              identType = case ty of
+                  Type -> P.Type
+                  SmallType smallType -> case smallType of
+                      Int          -> P.Int
+                      Bool         -> P.Bool
+                      Text         -> P.Text
+                      Unit         -> P.Unit
+                      Function _ _ -> P.Function
 
 
 
@@ -202,7 +220,9 @@ newtype TypeCheck a = TypeCheck {
 checkTypes :: AST ResolvedName -> Either Error (AST TypedName)
 checkTypes ast = do
     nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkFunction) ast
-    let makeNameTyped (NameWith name _) = NameWith name (SmallType (assert (Map.lookup name nameToTypeMap)))
+    let makeNameTyped (NameWith name _) = NameWith name (assert (oneOf [tryLookup, tryBuiltin])) where
+            tryLookup  = fmap SmallType     (Map.lookup name nameToTypeMap)
+            tryBuiltin = fmap typeOfBuiltin (getWhen (constructor @"BuiltinName") name)
     return ((map (fmap makeNameTyped)) ast)
 
 instance TypeCheckM TypeCheck where

@@ -238,7 +238,7 @@ class RenderName name where
     renderName :: P.DefinitionOrUse -> name -> P.Document
 
 instance RenderName Text where
-    renderName defOrUse name = P.note (P.Identifier (P.IdentInfo name defOrUse P.UnresolvedName Nothing)) (P.pretty name)
+    renderName defOrUse name = P.note (P.Identifier (P.IdentInfo name defOrUse P.Unknown False)) (P.pretty name)
 
 instance RenderName name => P.Render (Expression name) where
     render = \case
@@ -253,13 +253,13 @@ instance RenderName name => P.Render (Statement name) where
     render = \case
         Binding    btype name expr    -> P.keyword (case btype of Let -> "let"; Var -> "var") ++ " " ++ renderName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ P.render expr ++ P.semicolon
         Assign     name expr          -> renderName P.Use name ++ " " ++ P.assignEquals ++ " " ++ P.render expr ++ P.semicolon
-        IfThen     expr block         -> P.keyword "if" ++ " " ++ P.render expr ++ " " ++ renderBlock block
+        IfThen     expr block         -> P.keyword "if"      ++ " " ++ P.render expr ++ " " ++ renderBlock block
         IfThenElse expr block1 block2 -> P.render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
         Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block
-        While      expr block         -> P.keyword "while" ++ " " ++ P.render expr ++ " " ++ renderBlock block
-        Return     _    maybeExpr     -> P.keyword "return" ++ (maybe "" (\expr -> " " ++ P.render expr) maybeExpr) ++ P.semicolon
-        Break      _                  -> P.keyword "break" ++ P.semicolon
-        Expression expr               -> P.render expr ++ P.semicolon
+        While      expr block         -> P.keyword "while"   ++ " " ++ P.render expr ++ " " ++ renderBlock block
+        Return     _    maybeExpr     -> P.keyword "return"  ++ (maybe "" (\expr -> " " ++ P.render expr) maybeExpr) ++ P.semicolon
+        Break      _                  -> P.keyword "break"   ++ P.semicolon
+        Expression expr               -> P.render expr       ++ P.semicolon
 
 instance RenderName name => P.Render (Block name) where
     render Block { statements } = mconcat (P.punctuate P.hardline (map P.render statements))

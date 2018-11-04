@@ -601,15 +601,15 @@ prettyType = \case
     Text -> P.Text
 
 builtin :: Text -> P.Document
-builtin text = P.note (P.Identifier (P.IdentInfo text P.Use P.BuiltinName Nothing)) (P.pretty text)
+builtin text = P.note (P.Identifier (P.IdentInfo text P.Use P.Function True)) (P.pretty text)
 
 blockId :: P.DefinitionOrUse -> Name Block -> P.Document
-blockId defOrUse name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.BlockName Nothing
+blockId defOrUse name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.Block False
                         in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (render (ident name) ++ P.pretty (if description name == "" then "" else "_" ++ description name))
 
 -- TODO refactor `letID` and `blockId` maybe?
 letId :: P.DefinitionOrUse -> Name Expression -> P.Document
-letId   defOrUse name = let info = P.IdentInfo (identText (ident name)) defOrUse P.LetName (Just (prettyType (nameType name)))
+letId   defOrUse name = let info = P.IdentInfo (identText (ident name)) defOrUse (prettyType (nameType name)) False
                         in  P.note (P.Sigil info) "$" ++ P.note (P.Identifier info) (render (ident name))
 
 identText :: ID node -> Text
@@ -628,7 +628,7 @@ instance Render (ID node) where
     render = P.pretty . identText
 
 instance Render (Type Expression) where
-    render ty = P.note (P.Identifier (P.IdentInfo (showText ty) P.Use P.TypeName (Just (prettyType ty)))) (P.pretty (show ty))
+    render ty = P.note (P.Identifier (P.IdentInfo (showText ty) P.Use P.Type True)) (P.pretty (show ty))
 
 instance Render (Name Expression) where
     render name = letId P.Definition name ++ P.colon ++ " " ++ render (nameType name)
