@@ -230,16 +230,19 @@ translateStatement = \case
             value <- translateTemporary expr
             return (Branch value [Target joinPoint [], Target blockBody []])
         emitTransfer (Jump (Target whileBlock []))
-    AST.Return maybeExpr -> do
+    AST.Return target maybeExpr -> do
+        todo target
         maybeValue <- mapM translateTemporary maybeExpr
         emitTransfer (Jump (Target returnToCaller [fromMaybe (Literal (Number 0)) maybeValue]))
-    AST.Break -> do
-        todo -- TODO
+    AST.Break target -> do
+        todo target -- TODO
     AST.Expression expr -> do
         unused (translateTemporary expr)
 
 translateBlock :: TranslateM m => AST.Block AST.TypedName -> m ()
-translateBlock (AST.Block statements) = mapM_ translateStatement statements
+translateBlock (AST.Block target statements) = do
+    todo target
+    mapM_ translateStatement statements
 
 
 

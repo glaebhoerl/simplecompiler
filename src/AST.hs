@@ -15,7 +15,7 @@ import qualified Token  as T
 
 data Expression name
     = Named          !name
-    | Call           !name ![Expression name]
+    | Call           !name              ![Expression name]
     | NumberLiteral  !Integer
     | TextLiteral    !Text
     | UnaryOperator  !UnaryOperator     !(Expression name)
@@ -34,13 +34,14 @@ data Statement name
     | IfThenElse !(Expression name) !(Block name)      !(Block name)
     | Forever    !(Block name)
     | While      !(Expression name) !(Block name)
-    | Return     !(Maybe (Expression name))
-    | Break
+    | Return     !name              !(Maybe (Expression name))
+    | Break      !name -- return and break refer to the `exitTarget` in `Block`; these are "phantom names", not present in the source code
     | Expression !(Expression name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-newtype Block name = Block {
-    statements :: [Statement name]
+data Block name = Block {
+    exitTarget :: !(Maybe name), -- "phantom", see above
+    statements :: ![Statement name]
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Argument name = Argument {
@@ -129,18 +130,14 @@ expressionGrammar = mdo
                            liftA1 TextLiteral   (tokenConstructor @"Text"),
                            liftA2 Call          (tokenConstructor @"Name") (bracketed T.Round (separatedBy [T.Comma] expression)),
                            bracketed T.Round expression]
-
     unary    <- ruleCases [liftA2 UnaryOperator (tokenConstructor @"UnaryOperator") atom,
                            atom]
-
     binaries <- ruleCases [liftA3 BinaryOperation  unary (tokenConstructor @"BinaryOperator") binaries,
                            liftA1 SingleExpression unary]
-
     let expression = liftA1 resolvePrecedences binaries
-
     return expression
 
-blockGrammar :: Grammar r (Block Text)
+blockGrammar :: Grammar r (Maybe Text -> Block Text)
 blockGrammar = mdo
     expression <- expressionGrammar
     -----------------------------------------------------------
@@ -161,39 +158,41 @@ blockGrammar = mdo
         keyword T.K_if
         cond <- expression
         body <- block
-        return (IfThen cond body)
+        return (IfThen cond (body Nothing))
     ifthenelse <- E.rule $ do
         keyword T.K_if
         cond  <- expression
         body1 <- block
         keyword T.K_else
         body2 <- block
-        return (IfThenElse cond body1 body2)
+        return (IfThenElse cond (body1 Nothing) (body2 Nothing))
     forever <- E.rule $ do
         keyword T.K_forever
         body <- block
-        return (Forever body)
+        return (Forever (body (Just "break")))
     while <- E.rule $ do
         keyword T.K_while
         cond <- expression
         body <- block
-        return (While cond body)
+        return (While cond (body (Just "break")))
     ret <- E.rule $ do
         keyword T.K_return
         arg <- liftA1 head (zeroOrOne expression)
         token T.Semicolon
-        return (Return arg)
+        return (Return "return" arg)
     break <- E.rule $ do
         keyword T.K_break
         token T.Semicolon
-        return Break
+        return (Break "break")
     exprStatement <- E.rule $ do
         expr <- expression
         token T.Semicolon
         return (Expression expr)
     -----------------------------------------------------
     statement <- E.rule (oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement])
-    block     <- E.rule (liftA1 Block (bracketed T.Curly (oneOrMore statement)))
+    block     <- E.rule $ do
+        statements <- bracketed T.Curly (oneOrMore statement)
+        return (\exitTarget -> Block { exitTarget, statements })
     return block
 
 functionGrammar :: Grammar r (Function Text)
@@ -210,7 +209,7 @@ functionGrammar = do
         arguments    <- bracketed T.Round (separatedBy [T.Comma] argument)
         returns      <- liftA1 head (zeroOrOne (keyword T.K_returns `followedBy` tokenConstructor @"Name"))
         body         <- block
-        return Function { functionName, arguments, returns, body }
+        return Function { functionName, arguments, returns, body = body (Just "return") }
 
 
 type AST name = [Function name]
@@ -258,12 +257,12 @@ instance RenderName name => P.Render (Statement name) where
         IfThenElse expr block1 block2 -> P.render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
         Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block
         While      expr block         -> P.keyword "while" ++ " " ++ P.render expr ++ " " ++ renderBlock block
-        Return     maybeExpr          -> P.keyword "return" ++ (maybe "" (\expr -> " " ++ P.render expr) maybeExpr) ++ P.semicolon
-        Break                         -> P.keyword "break" ++ P.semicolon
+        Return     _    maybeExpr     -> P.keyword "return" ++ (maybe "" (\expr -> " " ++ P.render expr) maybeExpr) ++ P.semicolon
+        Break      _                  -> P.keyword "break" ++ P.semicolon
         Expression expr               -> P.render expr ++ P.semicolon
 
 instance RenderName name => P.Render (Block name) where
-    render (Block statements) = mconcat (P.punctuate P.hardline (map P.render statements))
+    render Block { statements } = mconcat (P.punctuate P.hardline (map P.render statements))
 
 instance RenderName name => P.Render (Argument name) where
     render Argument { argumentName, argumentType } = renderName P.Definition argumentName ++ P.colon ++ " " ++ renderName P.Use argumentType

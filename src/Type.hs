@@ -91,18 +91,15 @@ data TypeMismatch node = TypeMismatch {
 } deriving (Generic, Show)
 
 class Monad m => TypeCheckM m where
-    recordType  :: ResolvedName -> Type -> m ()
-    lookupType  :: ResolvedName         -> m LargeType
+    recordType  :: Type -> ResolvedName -> m ()
+    lookupType  :: ResolvedName         -> m Type
     nameAsType  :: ResolvedName         -> m Type
     reportError :: Error                -> m a
 
 inferExpression :: TypeCheckM m => AST.Expression ResolvedName -> m Type
 inferExpression = \case
     AST.Named name -> do
-        typeOfName <- lookupType name
-        case typeOfName of
-            Type                -> reportError UseOfTypeAsExpression
-            SmallType smallType -> return smallType
+        lookupType name
     AST.NumberLiteral int -> do
         when (int > fromIntegral (maxBound :: Int64)) $ do
             reportError LiteralOutOfRange
@@ -126,15 +123,13 @@ inferExpression = \case
     AST.Call function arguments -> do
         functionType <- lookupType function
         case functionType of
-            SmallType (Function argumentTypes returnType) -> do
+            Function argumentTypes returnType -> do
                 when (length argumentTypes != length arguments) $ do
                     reportError WrongNumberOfArguments
                 zipWithM checkExpression argumentTypes arguments
                 return returnType
-            SmallType _ -> do
+            _ -> do
                 reportError CallOfNonFunction
-            Type -> do
-                reportError UseOfTypeAsExpression
 
 checkExpression :: TypeCheckM m => Type -> AST.Expression ResolvedName -> m ()
 checkExpression expected expr = do
@@ -150,43 +145,51 @@ checkStatement :: TypeCheckM m => AST.Statement ResolvedName -> m ()
 checkStatement = \case
     AST.Binding _ name expr -> do
         inferredType <- inferExpression expr
-        recordType name inferredType
+        recordType inferredType name
     AST.Assign name expr -> do
         when (Name.info name != AST.Var) $ do
             reportError AssignToLet
         nameType <- lookupType name
-        case nameType of
-            SmallType smallType -> checkExpression smallType expr
-            Type                -> reportError UseOfTypeAsExpression
+        checkExpression nameType expr
     AST.IfThen expr block -> do
         checkExpression Bool expr
-        mapM_ checkStatement (AST.statements block)
+        checkBlock      Unit block
     AST.IfThenElse expr block1 block2 -> do
         checkExpression Bool expr
-        mapM_ checkStatement (AST.statements block1)
-        mapM_ checkStatement (AST.statements block2)
+        checkBlock      Unit block1
+        checkBlock      Unit block2
     AST.Forever block -> do
-        mapM_ checkStatement (AST.statements block)
+        checkBlock      Unit block
     AST.While expr block -> do
         checkExpression Bool expr
-        mapM_ checkStatement (AST.statements block)
-    AST.Return maybeExpr -> do
-        mapM_ (checkExpression Int) maybeExpr -- TODO check against return type!!
-    AST.Break -> do
-        -- TODO we should check that we're in a loop!!
-        return ()
+        checkBlock      Unit block
+    AST.Return target maybeExpr -> do
+        returnType <- lookupType target
+        case (returnType, maybeExpr) of
+            (expectedType, Just expr) -> checkExpression expectedType expr
+            (Unit,         Nothing)   -> return ()
+            (expectedType, Nothing)   -> reportError (TypeError TypeMismatch { expectedType, actualType = Unit, expression = AST.Named target {-HACK-} })
+    AST.Break target -> do
+        breakType <- lookupType target
+        assertM (breakType == Unit)
     AST.Expression expr -> do
         unused (inferExpression expr)
+
+checkBlock :: TypeCheckM m => Type -> AST.Block ResolvedName -> m ()
+checkBlock exitTargetType AST.Block { AST.exitTarget, AST.statements } = do
+    mapM_ (recordType exitTargetType) exitTarget
+    mapM_ checkStatement statements
 
 checkFunction :: TypeCheckM m => AST.Function ResolvedName -> m ()
 checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
     argumentTypes <- forM arguments $ \AST.Argument { AST.argumentName, AST.argumentType } -> do
         resolvedType <- nameAsType argumentType
-        recordType argumentName resolvedType
+        recordType resolvedType argumentName
         return resolvedType
-    returnType <- mapM nameAsType returns
-    recordType functionName (Function argumentTypes (fromMaybe Unit returnType))
-    mapM_ checkStatement (AST.statements body)
+    maybeReturnType <- mapM nameAsType returns
+    let returnType = fromMaybe Unit maybeReturnType
+    recordType (Function argumentTypes returnType) functionName
+    checkBlock returnType body
 
 
 
@@ -203,16 +206,18 @@ checkTypes ast = do
     return ((map (fmap makeNameTyped)) ast)
 
 instance TypeCheckM TypeCheck where
-    recordType name typeOfName = do
+    recordType typeOfName name = do
         doModifyState $ \typeMap -> do
             assertM (not (Map.member (Name.name name) typeMap))
             return (Map.insert (Name.name name) typeOfName typeMap)
         return ()
     lookupType = \case
         NameWith (Name.BuiltinName builtin) _ -> do
-            return (typeOfBuiltin builtin)
+            case typeOfBuiltin builtin of
+                SmallType smallType -> return smallType
+                Type                -> reportError UseOfTypeAsExpression
         NameWith otherName                  _ -> do
-            liftM (SmallType . assert . Map.lookup otherName) getState
+            liftM (assert . Map.lookup otherName) getState
     nameAsType = \case
         NameWith (Name.BuiltinName builtin) _ | Just builtinType <- builtinAsType builtin -> return builtinType
         _ -> reportError UseOfExpressionAsType

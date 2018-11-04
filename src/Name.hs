@@ -115,9 +115,10 @@ instance ResolveNamesIn AST.Function where
         }
 
 instance ResolveNamesIn AST.Block where
-    resolveNamesIn (AST.Block body) = do
-        resolvedBody <- enterScope (mapM resolveNamesIn body)
-        return (AST.Block resolvedBody)
+    resolveNamesIn AST.Block { AST.exitTarget, AST.statements } = enterScope $ do
+        resolvedTarget     <- mapM (bindName AST.Let) exitTarget
+        resolvedStatements <- mapM resolveNamesIn statements
+        return (AST.Block resolvedTarget resolvedStatements)
 
 -- all of this is SO CLOSE to just being a `mapM`,
 -- except for `bindName` and `enterScope` for blocks...
@@ -265,6 +266,7 @@ validate = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validateFunc
         return ()
     validateBlock block = do
         modifyState (prepend Map.empty)
+        mapM_ recordName        (AST.exitTarget block)
         mapM_ validateStatement (AST.statements block)
         modifyState (assert . tail)
         return ()
@@ -286,10 +288,11 @@ validate = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validateFunc
         AST.While expr body -> do
             validateExpression expr
             validateBlock body
-        AST.Return maybeExpr -> do
+        AST.Return target maybeExpr -> do
+            validateName target
             mapM_ validateExpression maybeExpr
-        AST.Break -> do
-            return ()
+        AST.Break target -> do
+            validateName target
         AST.Expression expr -> do
             validateExpression expr
     validateExpression = \case

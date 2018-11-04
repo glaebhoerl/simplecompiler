@@ -85,6 +85,7 @@ types :: Command (AST TypedName)
 types = do
     input  <- names
     result <- try (mapLeft prettyShow (Type.checkTypes input))
+    _      <- try (mapLeft prettyShow (Name.validate   result)) -- make sure types are assigned to names consistently!
     _      <- try (mapLeft prettyShow (Type.validate   result))
     return result
 
