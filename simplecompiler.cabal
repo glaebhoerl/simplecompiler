@@ -1,8 +1,8 @@
-name:                stageless
+name:                simplecompiler
 version:             0.1.0.0
 -- synopsis:
 -- description:
-homepage:            https://github.com/glaebhoerl/stageless
+homepage:            https://github.com/glaebhoerl/simplecompiler
 license:             MIT
 license-file:        LICENSE
 author:              Gábor Lehel
@@ -13,7 +13,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 -- extra-source-files:  README.md
 
-executable stageless
+executable simplecompiler
   hs-source-dirs:      src
   main-is:             Main.hs
   other-modules:       MyPrelude, Pretty, Token, AST, Name, Type, IR, LLVM
@@ -101,5 +101,5 @@ executable stageless
 
 source-repository head
   type:     git
-  location: https://github.com/glaebhoerl/stageless
+  location: https://github.com/glaebhoerl/simplecompiler
 
