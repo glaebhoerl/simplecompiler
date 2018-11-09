@@ -95,10 +95,10 @@ single :: a -> [a]
 single = \a -> [a]
 
 singleIf ::  Bool -> a -> [a]
-singleIf b a = if b then [a] else []
+singleIf = pureIf -- see below
 
 justIf :: Bool -> a -> Maybe a
-justIf b a = if b then Just a else Nothing
+justIf = pureIf
 
 left :: Either a b -> Maybe a
 left = either Just (const Nothing)
@@ -143,6 +143,9 @@ liftA0 = pure
 
 liftA1 :: Applicative f => (a -> b) -> f a -> f b
 liftA1 = fmap
+
+pureIf :: Alternative f => Bool -> a -> f a
+pureIf b a = if b then pure a else empty
 
 oneOf :: Alternative f => [f a] -> f a
 oneOf = foldl' (<|>) empty

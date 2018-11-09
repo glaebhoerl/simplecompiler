@@ -67,10 +67,10 @@ type Prod    r output = E.Prod r Expected T.Token output
 type Grammar r output = E.Grammar r (Prod r output)
 
 token :: T.Token -> Prod r ()
-token t = unused (E.token t)
+token = unused . E.token
 
 keyword :: T.Keyword -> Prod r ()
-keyword kw = token (T.Keyword kw)
+keyword = token . T.Keyword
 
 tokenConstructor :: forall name inner r. AsConstructor' name T.Token inner => Prod r inner
 tokenConstructor = E.terminal (getWhen (constructor @name))
