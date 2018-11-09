@@ -96,6 +96,7 @@ data Error
     = TypeError (TypeMismatch (AST.Expression ResolvedName))
     | CallOfNonFunction -- TODO
     | WrongNumberOfArguments -- TODO
+    | FunctionWithoutReturn -- TODO
     | UseOfTypeAsExpression -- TODO
     | UseOfExpressionAsType -- TODO
     | AssignToLet
@@ -208,6 +209,50 @@ checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.b
     let returnType = fromMaybe Unit maybeReturnType
     recordType (Function argumentTypes returnType) functionName
     checkBlock returnType body
+    when (returnType != Unit && not (definitelyReturns (controlFlow body))) $ do
+        reportError FunctionWithoutReturn
+
+data ControlFlow = ControlFlow {
+    definitelyReturns :: !Bool,
+    mightBreak        :: !Bool
+}
+
+instance Semigroup ControlFlow where
+    prev <> next = ControlFlow returns breaks where
+        returns = definitelyReturns prev || (not (mightBreak        prev) && definitelyReturns next)
+        breaks  = mightBreak        prev || (not (definitelyReturns prev) && mightBreak        next)
+
+instance Monoid ControlFlow where
+    mempty = ControlFlow False False
+
+controlFlow :: AST.Block (NameWith info) -> ControlFlow
+controlFlow = mconcat . map statementControlFlow . AST.statements where
+    statementControlFlow = \case
+        AST.Return {} ->
+            ControlFlow True  False
+        AST.Break {} ->
+            ControlFlow False True
+        AST.Binding {} ->
+            ControlFlow False False
+        AST.Assign {} ->
+            ControlFlow False False
+        AST.Expression {} ->
+            ControlFlow False False
+        AST.While {} ->
+            ControlFlow False False -- loops can't currently break out of the /outer/ context
+        AST.IfThen _ block ->
+            ControlFlow False (mightBreak (controlFlow block))
+        AST.IfThenElse _ block1 block2 ->
+            ControlFlow (returns1 && returns2) (breaks1 || breaks2) where
+                ControlFlow returns1 breaks1 = controlFlow block1
+                ControlFlow returns2 breaks2 = controlFlow block2
+        AST.Forever block ->
+            ControlFlow (noBreaks || doesReturn) False where
+                -- we can check whether there is a `break` by whether the `exitTarget` is ever referred to
+                -- (we make use of the Foldable instances for the AST)
+                -- unfortunately it's slightly messier because we have to leave out the `exitTarget` itself
+                noBreaks   = not (any (== (assert (AST.exitTarget block))) (block { AST.exitTarget = Nothing }))
+                doesReturn = definitelyReturns (controlFlow block)
 
 
 
@@ -223,7 +268,7 @@ checkTypes ast = do
     let makeNameTyped (NameWith name _) = NameWith name (assert (oneOf [tryLookup, tryBuiltin])) where
             tryLookup  = fmap SmallType     (Map.lookup name nameToTypeMap)
             tryBuiltin = fmap typeOfBuiltin (getWhen (constructor @"BuiltinName") name)
-    return ((map (fmap makeNameTyped)) ast)
+    return (map (fmap makeNameTyped) ast)
 
 instance TypeCheckM TypeCheck where
     recordType typeOfName name = do
