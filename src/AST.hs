@@ -73,7 +73,7 @@ keyword :: T.Keyword -> Prod r ()
 keyword = token . T.Keyword
 
 tokenConstructor :: forall name inner r. AsConstructor' name T.Token inner => Prod r inner
-tokenConstructor = E.terminal (getWhen (constructor @name))
+tokenConstructor = E.terminal (match @name)
 
 bracketed :: T.BracketKind -> Prod r output -> Prod r output
 bracketed kind inner = do

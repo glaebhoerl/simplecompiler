@@ -159,8 +159,8 @@ matchRepresentable a = do
     _ <- E.listLike (toText a)
     return a
 
-match :: (Enumerable a, TextRepresentation a) => (a -> Token) -> Prod r Token
-match toToken = liftA1 toToken (oneOf (map matchRepresentable enumerate))
+matchEnumerable :: (Enumerable a, TextRepresentation a) => (a -> Token) -> Prod r Token
+matchEnumerable toToken = liftA1 toToken (oneOf (map matchRepresentable enumerate))
 
 whitespace :: Prod r Char
 whitespace = oneOf (map E.token [' ', '\n'])
@@ -211,9 +211,9 @@ tokens = mdo
     spaces     <- E.rule (liftA1 (const []) (oneOrMore (oneOf [E.token ' ', E.token '\n'])))
     stringlike <- E.rule (liftA1 single (oneOf [liftA1 nameOrKeyword name, liftA1 Number number]))
     fixed      <- E.rule (liftA1 single (oneOf
-        [whitespaced (match BinaryOperator),
-        match UnaryOperator,
-        match Bracket',
+        [whitespaced (matchEnumerable BinaryOperator),
+        matchEnumerable UnaryOperator,
+        matchEnumerable Bracket',
         whitespaced (literal EqualsSign),
         literal Comma,
         literal Colon,

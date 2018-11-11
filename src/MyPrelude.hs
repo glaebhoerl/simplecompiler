@@ -201,6 +201,10 @@ modifyWhen prism f outer = maybe outer (constructFrom prism . f) (getWhen prism 
 constructor :: forall name inner outer. AsConstructor' name outer inner => Prism outer inner
 constructor = GenericLens._Ctor' @name
 
+-- for convenience
+match :: forall name inner outer. AsConstructor' name outer inner => outer -> Maybe inner
+match = getWhen (constructor @name)
+
 {- I wanted to use `#foo` instead of `@"foo"` syntax, using OverloadedLabels, but turns out it doesn't allow uppercase labels (for constructors) :(
 
 data Field (name :: Symbol) = Field
