@@ -627,14 +627,17 @@ identText = \case
     ID      i -> showText i
 
 renderBody :: [Statement] -> Transfer -> P.Document
-renderBody statements transfer = mconcat (P.punctuate P.hardline (map render statements ++ [render transfer]))
+renderBody statements transfer = P.braces (P.nest 4 (P.hardline ++ mconcat (P.punctuate P.hardline (map render statements ++ [render transfer])))) ++ P.hardline
+
+argumentList :: [Name] -> P.Document
+argumentList = P.parens . P.hsep . P.punctuate "," . map render
 
 -- we could probably refactor all these further but...
 
 instance Render ID where
     render = P.pretty . identText
 
--- NOTE `instance Pretty Type` is provided by `module Type`
+-- NOTE `instance Render Type` is provided by `module Type`
 
 instance Render Name where
     render name = letId P.Definition name ++ P.colon ++ " " ++ render (nameType name)
@@ -643,14 +646,16 @@ instance Render [Function] where
     render = mconcat . P.punctuate P.hardline . map render
 
 instance Render Function where
-    render = todo
+    render function@Function { functionBody, returnType } =
+        P.keyword "function" ++ " " ++ letId P.Definition (functionName function) ++ argumentList (arguments functionBody) ++ " " ++ P.keyword "returns" ++ render returnType ++
+         renderBody (body functionBody) (transfer functionBody)
 
 instance Render Block where
     render block = renderBody (body block) (transfer block)
 
 instance Render Statement where
     render = \case
-        BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline) where argumentList args = P.parens (P.hsep (P.punctuate "," (map render args)))
+        BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline)
         Let       name expr  -> P.keyword "let"   ++ " " ++ render name ++ " " ++ P.defineEquals ++ " " ++ render expr
         Assign    name value -> letId P.Use name  ++ " " ++ P.assignEquals ++ " " ++ render value
 
