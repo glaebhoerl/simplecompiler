@@ -190,7 +190,7 @@ checkStatement = \case
             (expectedType, Nothing)   -> reportError (TypeError TypeMismatch { expectedType, actualType = Unit, expression = AST.Named target {-HACK-} })
     AST.Break target -> do
         breakType <- lookupType target
-        assertM (breakType == Unit)
+        assertEqM breakType Unit
     AST.Expression expr -> do
         unused (inferExpression expr)
 

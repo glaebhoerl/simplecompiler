@@ -260,7 +260,7 @@ translateFunction = evalState initialState . runTranslate . translate where
             return (Jump (Target returnBlockName [Literal Unit]))
         -- FIXME get the actual root block itself! :(
         rootBlockDecl <- liftM (assert . match @"BlockDecl" . assert . head) (getM (field @"innermostBlock" . field @"statements")) -- lol :(
-        assertM (fst rootBlockDecl == rootBlockName)
+        assertEqM (fst rootBlockDecl) rootBlockName
         let functionBody = snd rootBlockDecl
         return Function { functionID = ASTName (Name.name functionName), functionBody, returnType }
 
@@ -330,7 +330,7 @@ instance TranslateM Translate where
         name <- case providedName of
             Just astName -> do
                 translatedName <- translateName astName
-                assertM (nameType translatedName == typeOf expr)
+                assertEqM (nameType translatedName) (typeOf expr)
                 return translatedName
             Nothing -> do
                 letID <- newID LetID
@@ -351,7 +351,7 @@ instance TranslateM Translate where
     emitContinuation :: Either Type.TypedName (Text, BlockType) -> Translate BlockName
     emitContinuation blockSpec = do
         alreadyEmitted <- getM (field @"innermostBlock" . field @"continuationState")
-        assertM (alreadyEmitted == NoContinuation)
+        assertEqM alreadyEmitted NoContinuation
         nextBlockName <- case blockSpec of
             Left nextBlockAstName -> do
                 translateBlockName nextBlockAstName
@@ -596,7 +596,7 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
             Nothing -> do
                 return oldTarget
             Just adjustedTarget -> do
-                assertM (targetArgs oldTarget == []) -- if the block we're eliminating had arguments, it's not trivial!
+                assertEqM (targetArgs oldTarget) [] -- if the block we're eliminating had arguments, it's not trivial!
                 getAdjustedTarget adjustedTarget -- check if this block was _also_ trivial
 
 

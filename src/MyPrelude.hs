@@ -406,6 +406,10 @@ msgAssertM :: (HasCallStack, Assert x, Monad m) => Text -> x -> m (AssertResult 
 msgAssertM msg x = withFrozenCallStack $
     return $! msgAssert msg x
 
+assertEqM :: (HasCallStack, Eq a, Show a, Monad m) => a -> a -> m ()
+assertEqM a b = withFrozenCallStack $
+    msgAssertM (showText a ++ " == " ++ showText b) (a == b)
+
 instance Assert Bool where
     type AssertResult Bool = ()
     msgAssert msg = withFrozenCallStack $

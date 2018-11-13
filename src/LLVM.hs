@@ -300,7 +300,7 @@ translateArguments arguments = do
     -- [For each calling block: CalledByBlockWith { callingBlock = block's name, argumentsReceived = [values it passed for arguments] }]
     calledByBlocks <- getArguments
     forM_ calledByBlocks $ \CalledByBlockWith { argumentsReceived } -> do
-        assertM (length argumentsReceived == length arguments)
+        assertEqM (length argumentsReceived) (length arguments)
     -- [For each calling block: [For each argument it passed: (the argument's value, the block's name)]]
     let incomingValuesGroupedByBlock =
             map (\CalledByBlockWith { callingBlock, argumentsReceived } ->
@@ -332,7 +332,7 @@ translateTransfer = \case
         return (instr, [callsBlockWith])
     IR.Branch value targets -> do
         operand <- translateValue value
-        assertM (length targets == 2)
+        assertEqM (length targets) 2
         callsBlocksWith <- mapM translateTarget targets
         let instr = L.CondBr {
             L.condition = operand,
@@ -449,13 +449,13 @@ instance LLVM SecondPass where
             -- TODO there is a probably a simpler way to express this?
             if argumentsPassed == []
                 then do
-                    assertM (calledByUs == [])
+                    assertEqM calledByUs []
                 else do
-                    assertM (calledByUs == [CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }])
+                    assertEqM calledByUs [CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }]
         doModifyM (field @"finishedBlocks") $ \finishedBlocks -> do
             instructions <- getM (field @"unfinishedBlocks" . field @"instructions")
             savedName    <- getM (field @"unfinishedBlocks" . field @"blockName")
-            assertM (blockName == savedName)
+            assertEqM blockName savedName
             let newBlock = BasicBlock savedName instructions (Do terminator)
             return (newBlock : finishedBlocks)
         modifyM (field @"unfinishedBlocks" ) (assert . previousBlock)

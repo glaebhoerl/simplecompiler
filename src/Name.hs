@@ -173,7 +173,7 @@ resolveNames = runExcept . evalStateT (Context Set.empty "" []) . runNameResolve
 resolveFunction :: AST.Function Text -> NameResolve (AST.Function ResolvedName)
 resolveFunction function@AST.Function { AST.functionName } = do
     doModifyState $ \Context { functions, locals } -> do
-        assertM (locals == [])
+        assertEqM locals []
         when (Set.member functionName functions) $ do
             throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
         return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals }
