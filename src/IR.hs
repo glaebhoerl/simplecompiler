@@ -88,12 +88,15 @@ data Target = Target {
 data Function = Function {
     functionID   :: !ID,
     functionBody :: !Block,
-    returnType   :: !Type
+    returnBlock  :: !BlockName
 } deriving (Generic, Eq, Show)
 
 functionName :: Function -> Name
-functionName Function { functionID, functionBody, returnType } =
-    Name functionID (Type.Function (map nameType (arguments functionBody)) returnType) ""
+functionName Function { functionID, functionBody, returnBlock } =
+    Name functionID (Type.Function argumentTypes returnType) ""
+    where argumentTypes = map nameType (arguments functionBody)
+          returnType    = assert (head (parameters (nameType returnBlock)))
+
 
 typeOf :: Expression -> Type
 typeOf = \case
@@ -121,15 +124,15 @@ typeOfBlock = BlockType . map nameType . arguments
 ---------------------------------------------------------------------------------------------------- TRANSLATION FRONTEND
 
 class Monad m => TranslateM m where
-    translateName       :: Type.TypedName -> m Name
-    translateBlockName  :: Type.TypedName -> m BlockName
-    emitStatement       :: Statement -> m ()
-    emitLet             :: Maybe Type.TypedName -> Expression -> m Name
-    emitBlock           :: Text -> BlockType -> m Transfer -> m BlockName
-    emitContinuation    :: Either Type.TypedName (Text, BlockType) -> m BlockName
-    emitTransfer        :: Transfer -> m ()
-    currentBlock        :: m BlockName
-    currentArguments    :: m [Name]
+    translateName      :: Type.TypedName -> m Name
+    translateBlockName :: Type.TypedName -> m BlockName
+    emitStatement      :: Statement -> m ()
+    emitLet            :: Maybe Type.TypedName -> Expression -> m Name
+    emitBlock          :: Text -> BlockType -> m Transfer -> m BlockName
+    emitContinuation   :: Either Type.TypedName (Text, BlockType) -> m BlockName
+    emitTransfer       :: Transfer -> m ()
+    currentBlock       :: m BlockName
+    currentArguments   :: m [Name]
 
 translateTemporary :: TranslateM m => AST.Expression Type.TypedName -> m Value
 translateTemporary = translateExpression Nothing
@@ -228,7 +231,7 @@ translateStatement = \case
                 translateStatements block
                 return (Jump (Target conditionTest []))
             value <- translateTemporary expr
-            return (Branch value [Target joinPoint [], Target blockBody []])
+            return (Branch value [Target joinPoint [Literal Unit], Target blockBody []])
         emitTransfer (Jump (Target whileBlock []))
     AST.Return target maybeExpr -> do
         translatedTarget <- translateBlockName target
@@ -249,20 +252,26 @@ translateStatements = mapM_ translateStatement . AST.statements
 translateFunction :: AST.Function Type.TypedName -> Function
 translateFunction = evalState initialState . runTranslate . translate where
     initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" [] [] NoContinuation (Just (innermostBlock initialState)) } -- HACK
-    translate AST.Function { AST.functionName, AST.arguments, AST.body } = do
-        let exitTarget    = assert (AST.exitTarget body)
-        let returnType    = Type.typeOf (AST.Named exitTarget)
+    translate AST.Function { AST.functionName, AST.arguments, AST.body = functionBody } = do
+        -- TODO clean this whole thing up maybe somehow
+        let exitTarget    = assert (AST.exitTarget functionBody)
         let rootBlockType = BlockType (map (Type.typeOf . AST.Named . AST.argumentName) arguments)
-        returnBlockName <- emitContinuation (Left exitTarget)
-        rootBlockName   <- emitBlock "root" rootBlockType $ do
-            translateStatements body
-            -- NOTE/TODO: In the case where the function does the return itself, this should be discard as dead code in the translation process?
-            return (Jump (Target returnBlockName [Literal Unit]))
-        -- FIXME get the actual root block itself! :(
-        rootBlockDecl <- liftM (assert . match @"BlockDecl" . assert . head) (getM (field @"innermostBlock" . field @"statements")) -- lol :(
+        returnBlock   <- translateBlockName exitTarget
+        rootBlockID   <- newID BlockID
+        rootBlockArgs <- mapM (translateName . AST.argumentName) arguments
+        let rootBlockName = Name rootBlockID rootBlockType "root"
+        setM (field @"innermostBlock" . field @"blockID") rootBlockID
+        setM (field @"innermostBlock" . field @"blockDescription") "root"
+        setM (field @"innermostBlock" . field @"blockArguments") rootBlockArgs
+        translateStatements functionBody
+        when (Type.typeOf (AST.Named exitTarget) == Type.Unit) $ do
+            emitTransfer (Jump (Target returnBlock [Literal Unit]))
+        getM (field @"innermostBlock") >>= (traceM . stringToText . take 10000 . show)
+        -- FIXME HACK
+        rootBlockDecl <- liftM (assert . match @"BlockDecl" . assert . head . statements . innermostBlock) getState
         assertEqM (fst rootBlockDecl) rootBlockName
         let functionBody = snd rootBlockDecl
-        return Function { functionID = ASTName (Name.name functionName), functionBody, returnType }
+        return Function { functionID = ASTName (Name.name functionName), functionBody, returnBlock }
 
 newtype Translate a = Translate {
     runTranslate :: State TranslateState a
@@ -315,7 +324,9 @@ instance TranslateM Translate where
 
     translateBlockName :: Type.TypedName -> Translate BlockName
     translateBlockName (Name.NameWith name ty) = do
-        return (Name (ASTName name) (translatedType ty) (Name.unqualifiedName name))
+        -- TODO it's not clear in when we should copy the `unqualifiedName` as the `description` and when not...?
+        -- right now it's inconsistent between lets and blocks
+        return (Name (ASTName name) (translatedType ty) "")
         where translatedType = \case
                 Type.SmallType ty -> BlockType [ty]
                 Type.Type         -> bug "Use of typename as exit target"
@@ -463,11 +474,11 @@ data ValidationError
 
 validate :: [Function] -> Either ValidationError ()
 validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
-    checkFunction Function { functionID, functionBody, returnType } = do
-        todo functionID returnType
-        checkBlock (BlockType todo) functionBody
-    checkBlock expectedType block = do
-        checkBlockType expectedType block
+    checkFunction function@Function { functionBody, returnBlock } = do
+        recordName (functionName function)
+        recordBlockName returnBlock
+        checkBlock functionBody
+    checkBlock block = do
         modifyState (prepend Map.empty)
         mapM_ recordName     (arguments block)
         mapM_ checkStatement (body      block)
@@ -477,7 +488,8 @@ validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
     checkStatement = \case
         BlockDecl name block -> do
             recordBlockName name -- block name is in scope for body
-            checkBlock (nameType name) block
+            checkBlockType (nameType name) block
+            checkBlock block
         Let name expr -> do
             checkExpression (nameType name) expr
             recordName name -- let name is not in scope for rhs
@@ -532,7 +544,9 @@ validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
     checkBlockType expectedType block = do
         when (typeOfBlock block != expectedType) $ do
             throwError (BlockTypeMismatch expectedType block)
-    checkName Name { nameID, nameType, description } = do
+    checkName name@Name { nameID, nameType, description } = do
+        when (nameID `is` (constructor @"ASTName" . constructor @"BuiltinName")) $ do  -- FIXME HACK
+            recordName name
         recordedType <- lookupType nameID
         when (nameType != recordedType) $ do
             throwError (Inconsistent (Name nameID nameType description) (Name nameID recordedType ""))
@@ -627,7 +641,7 @@ identText = \case
     ID      i -> showText i
 
 renderBody :: [Statement] -> Transfer -> P.Document
-renderBody statements transfer = P.braces (P.nest 4 (P.hardline ++ mconcat (P.punctuate P.hardline (map render statements ++ [render transfer])))) ++ P.hardline
+renderBody statements transfer = P.hardline ++ P.braces (P.nest 4 (P.hardline ++ mconcat (P.punctuate P.hardline (map render statements ++ [render transfer]))) ++ P.hardline)
 
 argumentList :: [Name] -> P.Document
 argumentList = P.parens . P.hsep . P.punctuate "," . map render
@@ -646,16 +660,17 @@ instance Render [Function] where
     render = mconcat . P.punctuate P.hardline . map render
 
 instance Render Function where
-    render function@Function { functionBody, returnType } =
-        P.keyword "function" ++ " " ++ letId P.Definition (functionName function) ++ argumentList (arguments functionBody) ++ " " ++ P.keyword "returns" ++ render returnType ++
+    render function@Function { functionBody, returnBlock } =
+        P.keyword "function" ++ " " ++ letId P.Definition (functionName function) ++ argumentList (arguments functionBody) ++ " " ++ P.keyword "returns" ++ " " ++ render returnType ++
          renderBody (body functionBody) (transfer functionBody)
+        where returnType = assert (head (parameters (nameType returnBlock)))
 
 instance Render Block where
     render block = renderBody (body block) (transfer block)
 
 instance Render Statement where
     render = \case
-        BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline)
+        BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ argumentList (arguments block) ++ renderBody (body block) (transfer block)
         Let       name expr  -> P.keyword "let"   ++ " " ++ render name ++ " " ++ P.defineEquals ++ " " ++ render expr
         Assign    name value -> letId P.Use name  ++ " " ++ P.assignEquals ++ " " ++ render value
 

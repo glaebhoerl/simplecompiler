@@ -217,7 +217,7 @@ checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.b
         reportError FunctionWithoutReturn
 
 data ControlFlow = ControlFlow {
-    definitelyReturns :: !Bool,
+    definitelyReturns :: !Bool, -- guaranteed divergence also counts as "returning"
     potentiallyBreaks :: !Bool
 }
 
@@ -254,7 +254,7 @@ controlFlow = mconcat . map statementControlFlow . AST.statements where
             ControlFlow (noBreaks || doesReturn) False where
                 -- we can check whether there is a `break` by whether the `exitTarget` is ever referred to
                 -- (we make use of the Foldable instances for the AST)
-                -- unfortunately it's slightly messier because we have to leave out the `exitTarget` itself
+                -- we have to make sure to leave out the `exitTarget` itself!
                 noBreaks   = not (any (== (assert (AST.exitTarget block))) (block { AST.exitTarget = Nothing }))
                 doesReturn = definitelyReturns (controlFlow block)
 
