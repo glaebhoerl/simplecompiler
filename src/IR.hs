@@ -1,8 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes #-} -- for `idIsEven`
 
 module IR (
-    Type (..), ID (..), Name (..), Literal (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), paramTypes, returnToCaller, typeOf, translate,
-    ValidationError (..), validate, eliminateTrivialBlocks
+    ID (..), NameWithType (..), Name, BlockName,
+    Literal (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), Function (..),
+    typeOf, typeOfBlock, translateFunction, validate, eliminateTrivialBlocks
 ) where
 
 import MyPrelude
@@ -11,78 +12,65 @@ import qualified Data.Map as Map
 
 import qualified Pretty as P
 import qualified AST    as AST
-import qualified Name   as AST
-import qualified Type   as AST
+import qualified Name   as Name
+import qualified Type   as Type
 
 import Pretty (Render, render)
+import Type   (Type)
 
 
 ---------------------------------------------------------------------------------------------------- TYPE DEFINITIONS
 
-data Type node where
-    Int        :: Type Expression
-    Bool       :: Type Expression
-    Text       :: Type Expression
-    Parameters :: ![Type Expression] -> Type Block
+newtype BlockType = BlockType {
+    parameters :: [Type]
+} deriving (Generic, Eq, Show)
 
-paramTypes :: Type Block -> [Type Expression]
-paramTypes (Parameters types) = types
+data ID
+    = ID      !Int
+    | ASTName !Name.Name -- this includes all functions, as well as `return` and `break` points!
+    deriving (Generic, Eq, Ord, Show)
 
-deriving instance Eq   (Type node)
-deriving instance Show (Type node)
-
-data ID node where
-    LetID   :: !Int      -> ID Expression
-    ASTName :: !AST.Name -> ID Expression
-    BlockID :: !Int      -> ID Block
-    Return  ::              ID Block
-
-deriving instance Eq   (ID node)
-deriving instance Ord  (ID node)
-deriving instance Show (ID node)
-
-data Name node = Name {
-    ident       :: !(ID   node),
-    nameType    :: !(Type node),
+data NameWithType nameType = Name {
+    nameID      :: !ID,
+    nameType    :: !nameType,
     description :: !Text
-} deriving (Generic, Show)
+} deriving (Generic, Show, Functor)
 
-instance Eq (Name node) where
-    (==) = (==) `on` ident
+type Name      = NameWithType Type
+type BlockName = NameWithType BlockType
 
-instance Ord (Name node) where
-    compare = compare `on` ident
+instance Eq  (NameWithType nameType) where
+    (==) = (==) `on` nameID
 
-returnToCaller :: Name Block
-returnToCaller = Name Return (Parameters [Int]) ""
+instance Ord (NameWithType nameType) where
+    compare = compare `on` nameID
 
 data Literal
     = Number !Int64
     | String !Text
+    | Unit
     deriving (Generic, Eq, Show)
 
 data Value
     = Literal !Literal
-    | Named   !(Name Expression)
+    | Named   !Name
     deriving (Generic, Eq, Show)
 
 data Expression
     = Value          !Value
     | UnaryOperator  !UnaryOperator !Value
     | BinaryOperator !Value !BinaryOperator !Value
-    | Ask            !Value
+    | Call           !Value ![Value]
     deriving (Generic, Eq, Show)
 
 data Statement
-    = BlockDecl !(Name Block)      !Block
-    | Let       !(Name Expression) !Expression
-    | Assign    !(Name Expression) !Value
-    | Say       !Value
-    | Write     !Value
+    = BlockDecl !BlockName !Block
+    | Let       !Name      !Expression -- also used for "expression statements" -- the name is simply ignored
+    | Assign    !Name      !Value
     deriving (Generic, Eq, Show)
 
 data Block = Block {
-    arguments :: ![Name Expression],
+    arguments :: ![Name],
     body      :: ![Statement],
     transfer  :: !Transfer
 } deriving (Generic, Eq, Show)
@@ -93,29 +81,39 @@ data Transfer
     deriving (Generic, Eq, Show)
 
 data Target = Target {
-    targetBlock :: !(Name Block),
+    targetBlock :: !BlockName,
     targetArgs  :: ![Value]
 } deriving (Generic, Eq, Show)
 
-class TypeOf a where
-    typeOf :: a -> Type a
+data Function = Function {
+    functionID   :: !ID,
+    functionBody :: !Block,
+    returnType   :: !Type
+} deriving (Generic, Eq, Show)
 
-instance TypeOf Expression where
-    typeOf = \case
-        Value (Literal literal)  -> case literal of
-            Number _             -> Int
-            String _             -> Text
-        Value (Named name)       -> nameType name
-        UnaryOperator Not      _ -> Bool
-        UnaryOperator Negate   _ -> Int
-        BinaryOperator _ op    _ -> case op of
-            ArithmeticOperator _ -> Int
-            ComparisonOperator _ -> Bool
-            LogicalOperator    _ -> Bool
-        Ask                    _ -> Int
+functionName :: Function -> Name
+functionName Function { functionID, functionBody, returnType } =
+    Name functionID (Type.Function (map nameType (arguments functionBody)) returnType) ""
 
-instance TypeOf Block where
-    typeOf = Parameters . map nameType . arguments
+typeOf :: Expression -> Type
+typeOf = \case
+    Value (Literal literal)    -> case literal of
+        Number _               -> Type.Int
+        String _               -> Type.Text
+        Unit                   -> Type.Unit
+    Value (Named name)         -> nameType name
+    UnaryOperator Not      _   -> Type.Bool
+    UnaryOperator Negate   _   -> Type.Int
+    BinaryOperator _ op    _   -> case op of
+        ArithmeticOperator _   -> Type.Int
+        ComparisonOperator _   -> Type.Bool
+        LogicalOperator    _   -> Type.Bool
+    Call                   f _ -> case typeOf (Value f) of
+        Type.Function      _ r -> r
+        _                      -> bug "Call of non-function in IR"
+
+typeOfBlock :: Block -> BlockType
+typeOfBlock = BlockType . map nameType . arguments
 
 
 
@@ -123,22 +121,23 @@ instance TypeOf Block where
 ---------------------------------------------------------------------------------------------------- TRANSLATION FRONTEND
 
 class Monad m => TranslateM m where
-    translateName       :: AST.TypedName       -> m (Name Expression)
-    emitStatement       :: Statement           -> m ()
-    emitLet             :: Maybe AST.TypedName -> Expression -> m (Name Expression)
-    emitBlock           :: Text -> Type Block  -> m Transfer -> m (Name Block)
-    emitContinuation    :: Text -> Type Block                -> m (Name Block) -- TODO add `Maybe AST.TypedName` or something
-    emitTransfer        :: Transfer            -> m ()
-    currentBlock        :: m (Name Block)
-    currentArguments    :: m [Name Expression]
+    translateName       :: Type.TypedName -> m Name
+    translateBlockName  :: Type.TypedName -> m BlockName
+    emitStatement       :: Statement -> m ()
+    emitLet             :: Maybe Type.TypedName -> Expression -> m Name
+    emitBlock           :: Text -> BlockType -> m Transfer -> m BlockName
+    emitContinuation    :: Either Type.TypedName (Text, BlockType) -> m BlockName
+    emitTransfer        :: Transfer -> m ()
+    currentBlock        :: m BlockName
+    currentArguments    :: m [Name]
 
-translateTemporary :: TranslateM m => AST.Expression AST.TypedName -> m Value
+translateTemporary :: TranslateM m => AST.Expression Type.TypedName -> m Value
 translateTemporary = translateExpression Nothing
 
-translateBinding :: TranslateM m => AST.TypedName -> AST.Expression AST.TypedName -> m Value
+translateBinding :: TranslateM m => Type.TypedName -> AST.Expression Type.TypedName -> m Value
 translateBinding = translateExpression . Just
 
-translateExpression :: TranslateM m => Maybe AST.TypedName -> AST.Expression AST.TypedName -> m Value
+translateExpression :: TranslateM m => Maybe Type.TypedName -> AST.Expression Type.TypedName -> m Value
 translateExpression providedName = let emitNamedLet = emitLet providedName in \case
     AST.Named name -> do
         translatedName <- translateName name
@@ -167,8 +166,8 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
     AST.BinaryOperator expr1 (LogicalOperator op) expr2 | (expr2 `isn't` constructor @"NumberLiteral" && expr2 `isn't` constructor @"Named") -> do
         value1 <- translateTemporary expr1
         let opName = toLower (showText op)
-        joinPoint <- emitContinuation ("join_" ++ opName) (Parameters [Bool]) -- TODO use the provided name for the arg!
-        rhsBlock <- emitBlock opName (Parameters []) $ do
+        joinPoint <- emitContinuation (Right ("join_" ++ opName, BlockType [Type.Bool])) -- TODO use the provided name for the arg!
+        rhsBlock <- emitBlock opName (BlockType []) $ do
             value2 <- translateTemporary expr2
             return (Jump (Target joinPoint [value2]))
         let branches = case op of
@@ -183,12 +182,12 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         name   <- emitNamedLet (BinaryOperator value1 op value2)
         return (Named name)
     AST.Call function exprs -> do
-        --value <- translateTemporary expr
-        --name  <- emitNamedLet (Ask value)
-        --return (Named name)
-        return todo
+        fn     <- translateName function
+        values <- mapM translateTemporary exprs
+        name   <- emitNamedLet (Call (Named fn) values)
+        return (Named name)
 
-translateStatement :: TranslateM m => AST.Statement AST.TypedName -> m ()
+translateStatement :: TranslateM m => AST.Statement Type.TypedName -> m ()
 translateStatement = \case
     AST.Binding _ name expr -> do
         _ <- translateBinding name expr
@@ -199,64 +198,71 @@ translateStatement = \case
         emitStatement (Assign translatedName value)
     AST.IfThen expr block -> do
         value <- translateTemporary expr
-        joinPoint <- emitContinuation "join_if" (Parameters [])
-        thenBlock <- emitBlock "if" (Parameters []) $ do
-            translateBlock block
+        joinPoint <- emitContinuation (Right ("join_if", BlockType []))
+        thenBlock <- emitBlock "if" (BlockType []) $ do
+            translateStatements block
             return (Jump (Target joinPoint []))
         emitTransfer (Branch value [Target joinPoint [], Target thenBlock []])
     AST.IfThenElse expr block1 block2 -> do
         value <- translateTemporary expr
-        joinPoint <- emitContinuation "join_if_else" (Parameters [])
-        thenBlock <- emitBlock "if" (Parameters []) $ do
-            translateBlock block1
+        joinPoint <- emitContinuation (Right ("join_if_else", BlockType []))
+        thenBlock <- emitBlock "if" (BlockType []) $ do
+            translateStatements block1
             return (Jump (Target joinPoint []))
-        elseBlock <- emitBlock "else" (Parameters []) $ do
-            translateBlock block2
+        elseBlock <- emitBlock "else" (BlockType []) $ do
+            translateStatements block2
             return (Jump (Target joinPoint []))
         emitTransfer (Branch value [Target elseBlock [], Target thenBlock []])
     AST.Forever block -> do
-        foreverBlock <- emitBlock "forever" (Parameters []) $ do
+        emitContinuation (Left (assert (AST.exitTarget block)))
+        foreverBlock <- emitBlock "forever" (BlockType []) $ do
             blockBody <- currentBlock
-            translateBlock block
+            translateStatements block
             return (Jump (Target blockBody []))
         emitTransfer (Jump (Target foreverBlock []))
     AST.While expr block -> do
-        joinPoint <- emitContinuation "join_while" (Parameters [])
-        whileBlock <- emitBlock "while" (Parameters []) $ do
+        joinPoint <- emitContinuation (Left (assert (AST.exitTarget block)))
+        whileBlock <- emitBlock "while" (BlockType []) $ do
             conditionTest <- currentBlock
-            blockBody <- emitBlock "while_body" (Parameters []) $ do
-                translateBlock block
+            blockBody <- emitBlock "while_body" (BlockType []) $ do
+                translateStatements block
                 return (Jump (Target conditionTest []))
             value <- translateTemporary expr
             return (Branch value [Target joinPoint [], Target blockBody []])
         emitTransfer (Jump (Target whileBlock []))
     AST.Return target maybeExpr -> do
-        todo target
-        maybeValue <- mapM translateTemporary maybeExpr
-        emitTransfer (Jump (Target returnToCaller [fromMaybe (Literal (Number 0)) maybeValue]))
+        translatedTarget <- translateBlockName target
+        maybeValue       <- mapM translateTemporary maybeExpr
+        emitTransfer (Jump (Target translatedTarget [fromMaybe (Literal Unit) maybeValue]))
     AST.Break target -> do
-        todo target -- TODO
+        translatedTarget <- translateBlockName target
+        emitTransfer (Jump (Target translatedTarget []))
     AST.Expression expr -> do
         unused (translateTemporary expr)
 
-translateBlock :: TranslateM m => AST.Block AST.TypedName -> m ()
-translateBlock (AST.Block target statements) = do
-    todo target
-    mapM_ translateStatement statements
-
-
+translateStatements :: TranslateM m => AST.Block Type.TypedName -> m ()
+translateStatements = mapM_ translateStatement . AST.statements
 
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND
 
-translate :: AST.Block AST.TypedName -> Block
-translate = evalState initialState . runTranslate . translateRootBlock
-    where
-        initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (BlockID 0) "root" [] [] NoContinuation (Just (innermostBlock initialState)) } -- HACK
-        translateRootBlock rootBlock = do
-            translateBlock rootBlock
-            emitTransfer (Jump (Target returnToCaller [Literal (Number 0)]))
-            liftM (snd . assert . getWhen (constructor @"BlockDecl") . assert . head) (getM (field @"innermostBlock" . field @"statements")) -- lol :(
+translateFunction :: AST.Function Type.TypedName -> Function
+translateFunction = evalState initialState . runTranslate . translate where
+    initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" [] [] NoContinuation (Just (innermostBlock initialState)) } -- HACK
+    translate AST.Function { AST.functionName, AST.arguments, AST.body } = do
+        let exitTarget    = assert (AST.exitTarget body)
+        let returnType    = Type.typeOf (AST.Named exitTarget)
+        let rootBlockType = BlockType (map (Type.typeOf . AST.Named . AST.argumentName) arguments)
+        returnBlockName <- emitContinuation (Left exitTarget)
+        rootBlockName   <- emitBlock "root" rootBlockType $ do
+            translateStatements body
+            -- NOTE/TODO: In the case where the function does the return itself, this should be discard as dead code in the translation process?
+            return (Jump (Target returnBlockName [Literal Unit]))
+        -- FIXME get the actual root block itself! :(
+        rootBlockDecl <- liftM (assert . match @"BlockDecl" . assert . head) (getM (field @"innermostBlock" . field @"statements")) -- lol :(
+        assertM (fst rootBlockDecl == rootBlockName)
+        let functionBody = snd rootBlockDecl
+        return Function { functionID = ASTName (Name.name functionName), functionBody, returnType }
 
 newtype Translate a = Translate {
     runTranslate :: State TranslateState a
@@ -268,9 +274,9 @@ data TranslateState = TranslateState {
 } deriving (Generic, Eq, Show)
 
 data BlockState = BlockState {
-    blockID           :: !(ID Block),
+    blockID           :: !ID,
     blockDescription  :: !Text,
-    blockArguments    :: ![Name Expression],
+    blockArguments    :: ![Name],
     statements        :: ![Statement],
     continuationState :: !ContinuationState,
     enclosingBlock    :: !(Maybe BlockState)
@@ -282,48 +288,44 @@ data ContinuationState
     | EmittedTransfer     !Transfer
     deriving (Generic, Eq, Show)
 
-class NewID node where
-    idIsEven :: Bool
-    makeID :: Int -> ID node
+data IDSort = LetID | BlockID
 
-instance NewID Expression where
-    idIsEven = True
-    makeID = LetID
-
-instance NewID Block where
-    idIsEven = False
-    makeID = BlockID
-
-newID :: forall node. NewID node => Translate (ID node)
-newID = do
+newID :: IDSort -> Translate ID
+newID sort = do
     -- NOTE incrementing first is significant, ID 0 is the root block!
     modifyM (field @"lastID") $ \lastID ->
-        lastID + (if idIsEven @node == (lastID % 2 == 0) then 2 else 1)
+        let isEven = case sort of LetID -> True; BlockID -> False
+        in lastID + (if isEven == (lastID % 2 == 0) then 2 else 1)
     new <- getM (field @"lastID")
-    return (makeID new)
+    return (ID new)
 
-newArgumentIDs :: Type Block -> Translate [Name Expression]
-newArgumentIDs (Parameters argTypes) = do
+newArgumentIDs :: BlockType -> Translate [Name]
+newArgumentIDs (BlockType argTypes) = do
     forM argTypes $ \argType -> do
-        argID <- newID
+        argID <- newID LetID
         return (Name argID argType "")
 
 instance TranslateM Translate where
-    translateName :: AST.TypedName -> Translate (Name Expression)
-    translateName (AST.NameWith name ty) = do
-        return (Name (ASTName name) (translatedType ty) (AST.unqualifiedName name))
+    translateName :: Type.TypedName -> Translate Name -- TODO take these out of the type class?
+    translateName (Name.NameWith name ty) = do
+        return (Name (ASTName name) (translatedType ty) (Name.unqualifiedName name))
         where translatedType = \case
-                AST.SmallType AST.Bool -> Bool
-                AST.SmallType AST.Int  -> Int
-                AST.SmallType AST.Text -> Text
-                AST.Type               -> bug "Use of typename as local"
+                Type.SmallType ty -> ty
+                Type.Type         -> bug "Use of typename as local"
+
+    translateBlockName :: Type.TypedName -> Translate BlockName
+    translateBlockName (Name.NameWith name ty) = do
+        return (Name (ASTName name) (translatedType ty) (Name.unqualifiedName name))
+        where translatedType = \case
+                Type.SmallType ty -> BlockType [ty]
+                Type.Type         -> bug "Use of typename as exit target"
 
     emitStatement :: Statement -> Translate ()
     emitStatement statement = do
         modifyM (field @"innermostBlock" . field @"statements") (++ [statement])
         return ()
 
-    emitLet :: Maybe AST.TypedName -> Expression -> Translate (Name Expression)
+    emitLet :: Maybe Type.TypedName -> Expression -> Translate Name
     emitLet providedName expr = do
         name <- case providedName of
             Just astName -> do
@@ -331,31 +333,35 @@ instance TranslateM Translate where
                 assertM (nameType translatedName == typeOf expr)
                 return translatedName
             Nothing -> do
-                letID <- newID
+                letID <- newID LetID
                 return (Name letID (typeOf expr) "")
         emitStatement (Let name expr)
         return name
 
-    emitBlock :: Text -> Type Block -> Translate Transfer -> Translate (Name Block)
+    emitBlock :: Text -> BlockType -> Translate Transfer -> Translate BlockName
     emitBlock description argTypes translateBody = do
-        blockID <- newID
+        blockID <- newID BlockID
         args    <- newArgumentIDs argTypes
         modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] NoContinuation (Just previouslyInnermost))
-        blockName     <- currentBlock
+        blockName <- currentBlock
         transferAtEnd <- translateBody
         emitTransfer transferAtEnd -- this will handle popping and emitting the finished block
         return blockName
 
-    emitContinuation :: Text -> Type Block -> Translate (Name Block)
-    emitContinuation nextBlockDescription nextBlockParams = do
+    emitContinuation :: Either Type.TypedName (Text, BlockType) -> Translate BlockName
+    emitContinuation blockSpec = do
         alreadyEmitted <- getM (field @"innermostBlock" . field @"continuationState")
         assertM (alreadyEmitted == NoContinuation)
-        nextBlockID    <- newID
-        nextBlockArgs  <- newArgumentIDs nextBlockParams
-        let nextBlockName = Name nextBlockID nextBlockParams nextBlockDescription
-        let nextBlockStub = Block { arguments = nextBlockArgs, body = [], transfer = Jump (Target returnToCaller []) }
+        nextBlockName <- case blockSpec of
+            Left nextBlockAstName -> do
+                translateBlockName nextBlockAstName
+            Right (nextBlockDescription, nextBlockParams) -> do
+                nextBlockID <- newID BlockID
+                return (Name nextBlockID nextBlockParams nextBlockDescription)
+        nextBlockArgs <- newArgumentIDs (nameType nextBlockName)
+        let nextBlockStub = Block { arguments = nextBlockArgs, body = [], transfer = Jump (Target (Name (ID -1) (BlockType []) "") []) }
         emitStatement (BlockDecl nextBlockName nextBlockStub)
-        setM (field @"innermostBlock" . field @"continuationState") (EmittedContinuation (BlockState nextBlockID nextBlockDescription nextBlockArgs [] NoContinuation Nothing))
+        setM (field @"innermostBlock" . field @"continuationState") (EmittedContinuation (BlockState (nameID nextBlockName) (description nextBlockName) nextBlockArgs [] NoContinuation Nothing))
         return nextBlockName
 
     -- does this black have an emitted continuation?
@@ -366,7 +372,7 @@ instance TranslateM Translate where
     --      no  -> pop this block, append this block as a blockdecl statement to the parent block
     emitTransfer :: Transfer -> Translate ()
     emitTransfer transfer = do
-        BlockState { blockArguments, statements, continuationState, blockID } <- getM (field @"innermostBlock")
+        BlockState { blockArguments, statements, continuationState } <- getM (field @"innermostBlock")
         case continuationState of
             EmittedTransfer _ -> bug "Transfer already emitted!"
             EmittedContinuation continuationBlock -> do
@@ -388,14 +394,14 @@ instance TranslateM Translate where
                     _ -> do
                         emitStatement (BlockDecl blockName finishedBlock)
 
-    currentBlock :: Translate (Name Block)
+    currentBlock :: Translate BlockName
     currentBlock = do
         blockID     <- getM (field @"innermostBlock" . field @"blockID")
         description <- getM (field @"innermostBlock" . field @"blockDescription")
         arguments   <- currentArguments
-        return (Name blockID (Parameters (map nameType arguments)) description)
+        return (Name blockID (BlockType (map nameType arguments)) description)
 
-    currentArguments :: Translate [Name Expression]
+    currentArguments :: Translate [Name]
     currentArguments = do
         getM (field @"innermostBlock" . field @"blockArguments")
 
@@ -437,68 +443,44 @@ block main() {
 
 
 
-
 ---------------------------------------------------------------------------------------------------- VALIDATION
 
-data ValidationError where
-    NotInScope     :: !(ID node)                         -> ValidationError
-    Redefined      :: !(ID node)                         -> ValidationError
-    Inconsistent   :: !(Name node) -> !(Name node)       -> ValidationError
-    TypeMismatch   :: Show node => !(Type node) -> !node -> ValidationError -- Technically we don't need the `Show` here, but `deriving` doesn't know that.
-    BadTargetCount :: ![Target]                          -> ValidationError
-    BadArgsCount   :: !Target                            -> ValidationError
-
-deriving instance Show ValidationError
-
-data Scope = Scope {
-    lets   :: !(Map (ID Expression) (Type Expression)),
-    blocks :: !(Map (ID Block)      (Type Block)),
-    parent :: !(Maybe Scope)
-} deriving Generic
-
--- this is basically the use case for `dependent-map`, but this seems simpler for now
-insertID :: ID node -> Type node -> Scope -> Scope
-insertID ident nameType = case ident of
-    Return    -> bug "Tried to insert the special builtin `return` block into the context!"
-    BlockID _ -> modify (field @"blocks") (Map.insert ident nameType)
-    LetID   _ -> modify (field @"lets")   (Map.insert ident nameType)
-    ASTName _ -> modify (field @"lets")   (Map.insert ident nameType)
-
-lookupID :: ID node -> Scope -> Maybe (Type node)
-lookupID ident Scope { lets, blocks, parent } = case ident of
-    Return    -> Just (nameType returnToCaller)
-    BlockID _ -> orLookupInParent (Map.lookup ident blocks)
-    LetID   _ -> orLookupInParent (Map.lookup ident lets)
-    ASTName _ -> orLookupInParent (Map.lookup ident lets)
-    where orLookupInParent = maybe (join (fmap (lookupID ident) parent)) Just
-
-memberID :: ID node -> Scope -> Bool
-memberID ident = isJust . lookupID ident
+-- TODO think through what other new error possibilities there might be!
+data ValidationError
+    = NotInScope         !ID
+    | Redefined          !ID
+    | ExpectedValue      !BlockName
+    | ExpectedBlock      !Name
+    | Inconsistent       !Name      !Name
+    | BlockInconsistent  !BlockName !BlockName
+    | TypeMismatch       !Type      !Expression
+    | BlockTypeMismatch  !BlockType !Block
+    | BadTargetCount     ![Target]
+    | BadTargetArgsCount !Target
+    | BadCallArgsCount   !Expression
+    | CallOfNonFunction  !Expression
+    deriving (Generic, Show)
 
 validate :: Block -> Either ValidationError ()
-validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlock (Parameters []) where
+validate = runExcept . evalStateT [Map.empty] . checkBlock (BlockType []) where
     checkBlock expectedType block = do
-        checkType expectedType block
-        modifyState (\parent -> Scope Map.empty Map.empty (Just parent))
-        mapM_ recordID       (arguments block)
+        checkBlockType expectedType block
+        modifyState (prepend Map.empty)
+        mapM_ recordName     (arguments block)
         mapM_ checkStatement (body      block)
         checkTransfer        (transfer  block)
-        modifyState (assert . parent)
+        modifyState (assert . tail)
         return ()
     checkStatement = \case
         BlockDecl name block -> do
-            recordID name -- block name is in scope for body
+            recordBlockName name -- block name is in scope for body
             checkBlock (nameType name) block
         Let name expr -> do
             checkExpression (nameType name) expr
-            recordID name -- let name is not in scope for rhs
+            recordName name -- let name is not in scope for rhs
         Assign name value -> do
-            checkID name
+            checkName name
             checkValue (nameType name) value
-        Say value -> do
-            checkValue Text value
-        Write value -> do
-            checkValue Int value
     checkExpression expectedType expr = do
         checkType expectedType expr
         case expr of
@@ -511,48 +493,73 @@ validate = runExcept . evalStateT (Scope Map.empty Map.empty Nothing) . checkBlo
             BinaryOperator value1 op value2 -> do
                 mapM_ (checkValue opInputType) [value1, value2] where
                     opInputType = case op of
-                        ArithmeticOperator _ -> Int
-                        ComparisonOperator _ -> Int
-                        LogicalOperator    _ -> Bool
-            Ask value -> do
-                checkValue Text value
+                        ArithmeticOperator _ -> Type.Int
+                        ComparisonOperator _ -> Type.Int
+                        LogicalOperator    _ -> Type.Bool
+            Call fn args -> case typeOf (Value fn) of
+                Type.Function argTypes returnType -> do
+                    mapM_ checkName (match @"Named" fn)
+                    when (returnType != expectedType) $ do
+                        throwError (TypeMismatch expectedType expr)
+                    when (length args != length argTypes) $ do
+                        throwError (BadCallArgsCount expr)
+                    zipWithM_ checkValue argTypes args
+                _ -> do
+                    throwError (CallOfNonFunction expr)
     checkValue expectedType value = do
         checkType expectedType (Value value)
-        case value of
-            Named   name -> checkID name
-            Literal _    -> return ()
+        mapM_ checkName (match @"Named" value)
     checkTransfer = \case
         Jump target -> do
             checkTarget target
         Branch value targets -> do
-            checkValue Bool value
+            checkValue Type.Bool value
             when (length targets != 2) $ do
                 throwError (BadTargetCount targets)
             mapM_ checkTarget targets
     checkTarget target@Target { targetBlock, targetArgs } = do
-        checkID targetBlock
-        let expectedTypes = paramTypes (nameType targetBlock)
+        checkBlockName targetBlock
+        let expectedTypes = parameters (nameType targetBlock)
         when (length expectedTypes != length targetArgs) $ do
-            throwError (BadArgsCount target)
+            throwError (BadTargetArgsCount target)
         zipWithM_ checkValue expectedTypes targetArgs
-    checkType expectedType node = do
-        when (typeOf node != expectedType) $ do
-            throwError (TypeMismatch expectedType node)
-    recordID Name { ident, nameType } = do
-        doModifyState $ \scope -> do
-            when (memberID ident scope) $ do -- FIXME this should be a shallow check?
-                throwError (Redefined ident)
-            return (insertID ident nameType scope)
+    checkType expectedType expr = do
+        when (typeOf expr != expectedType) $ do
+            throwError (TypeMismatch expectedType expr)
+    checkBlockType expectedType block = do
+        when (typeOfBlock block != expectedType) $ do
+            throwError (BlockTypeMismatch expectedType block)
+    checkName Name { nameID, nameType, description } = do
+        recordedType <- lookupType nameID
+        when (nameType != recordedType) $ do
+            throwError (Inconsistent (Name nameID nameType description) (Name nameID recordedType ""))
+    checkBlockName Name { nameID, nameType, description } = do -- FIXME deduplicate
+        recordedType <- lookupBlockType nameID
+        when (nameType != recordedType) $ do
+            throwError (BlockInconsistent (Name nameID nameType description) (Name nameID recordedType ""))
+    lookupType nameID = do
+        nameType <- lookupID nameID
+        case nameType of
+            Right valueType -> return valueType
+            Left  blockType -> throwError (ExpectedValue (Name nameID blockType ""))
+    lookupBlockType nameID = do
+        nameType <- lookupID nameID
+        case nameType of
+            Left  blockType -> return blockType
+            Right valueType -> throwError (ExpectedBlock (Name nameID valueType ""))
+    lookupID nameID = do
+        scopes <- getState
+        case Map.lookup nameID (Map.unions scopes) of
+            Just nameType -> return nameType
+            Nothing       -> throwError (NotInScope nameID)
+    recordName      = insertName . fmap Right
+    recordBlockName = insertName . fmap Left
+    insertName Name { nameID, nameType } = do
+        doModifyState $ \(names : parents) -> do
+            when (Map.member nameID names) $ do -- FIXME this should be a shallow check?
+                throwError (Redefined nameID)
+            return (Map.insert nameID nameType names : parents)
         return ()
-    checkID Name { ident, nameType, description } = do
-        inContext <- liftM (lookupID ident) getState
-        case inContext of
-            Nothing -> do
-                throwError (NotInScope ident)
-            Just recordedType -> do
-                when (nameType != recordedType) $ do
-                    throwError (Inconsistent (Name ident nameType description) (Name ident recordedType ""))
-
 
 
 
@@ -594,43 +601,39 @@ eliminateTrivialBlocks = evalState Map.empty . visitBlock where
 
 ---------------------------------------------------------------------------------------------------- PRETTY PRINTING
 
-prettyType :: Type Expression -> P.Type
+prettyType :: Type -> P.Type
 prettyType = \case
-    Int  -> P.Int
-    Bool -> P.Bool
-    Text -> P.Text
+    Type.Int          -> P.Int
+    Type.Bool         -> P.Bool
+    Type.Text         -> P.Text
+    Type.Unit         -> P.Unit
+    Type.Function _ _ -> P.Function
 
-builtin :: Text -> P.Document
-builtin text = P.note (P.Identifier (P.IdentInfo text P.Use P.Function True)) (P.pretty text)
-
-blockId :: P.DefinitionOrUse -> Name Block -> P.Document
-blockId defOrUse name = let info = P.IdentInfo (identText (ident name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.Block False
-                        in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (render (ident name) ++ P.pretty (if description name == "" then "" else "_" ++ description name))
+blockId :: P.DefinitionOrUse -> BlockName -> P.Document
+blockId defOrUse name = let info = P.IdentInfo (identText (nameID name) ++ (if description name == "" then "" else "_" ++ description name)) defOrUse P.Block False
+                        in  P.note (P.Sigil info) "%" ++ P.note (P.Identifier info) (render (nameID name) ++ P.pretty (if description name == "" then "" else "_" ++ description name))
 
 -- TODO refactor `letID` and `blockId` maybe?
-letId :: P.DefinitionOrUse -> Name Expression -> P.Document
-letId   defOrUse name = let info = P.IdentInfo (identText (ident name)) defOrUse (prettyType (nameType name)) False
-                        in  P.note (P.Sigil info) "$" ++ P.note (P.Identifier info) (render (ident name))
+letId :: P.DefinitionOrUse -> Name -> P.Document
+letId   defOrUse name = let info = P.IdentInfo (identText (nameID name)) defOrUse (prettyType (nameType name)) False
+                        in  P.note (P.Sigil info) "$" ++ P.note (P.Identifier info) (render (nameID name))
 
-identText :: ID node -> Text
+identText :: ID -> Text
 identText = \case
-    ASTName n -> AST.unqualifiedName n
-    LetID   i -> showText i
-    BlockID i -> showText i
-    Return    -> "return" -- FIXME tag as P.Keyword!
+    ASTName n -> Name.unqualifiedName n
+    ID      i -> showText i
 
 renderBody :: [Statement] -> Transfer -> P.Document
 renderBody statements transfer = mconcat (P.punctuate P.hardline (map render statements ++ [render transfer]))
 
 -- we could probably refactor all these further but...
 
-instance Render (ID node) where
+instance Render ID where
     render = P.pretty . identText
 
-instance Render (Type Expression) where
-    render ty = P.note (P.Identifier (P.IdentInfo (showText ty) P.Use P.Type True)) (P.pretty (show ty))
+-- NOTE `instance Pretty Type` is provided by `module Type`
 
-instance Render (Name Expression) where
+instance Render Name where
     render name = letId P.Definition name ++ P.colon ++ " " ++ render (nameType name)
 
 instance Render Block where
@@ -641,8 +644,6 @@ instance Render Statement where
         BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ argumentList (arguments block) ++ " " ++ P.braces (P.nest 4 (P.hardline ++ renderBody (body block) (transfer block)) ++ P.hardline) where argumentList args = P.parens (P.hsep (P.punctuate "," (map render args)))
         Let       name expr  -> P.keyword "let"   ++ " " ++ render name ++ " " ++ P.defineEquals ++ " " ++ render expr
         Assign    name value -> letId P.Use name  ++ " " ++ P.assignEquals ++ " " ++ render value
-        Say       value      -> builtin "say"     ++ P.parens (render value)
-        Write     value      -> builtin "write"   ++ P.parens (render value)
 
 instance Render Transfer where
     render = \case
@@ -657,7 +658,7 @@ instance Render Expression where
         Value          value            -> render value
         UnaryOperator  op value         -> P.unaryOperator op ++ render value
         BinaryOperator value1 op value2 -> render value1 ++ " " ++ P.binaryOperator op ++ " " ++ render value2
-        Ask            value            -> builtin "ask" ++ P.parens (render value)
+        Call           fn args          -> render fn ++ P.parens (P.hsep (P.punctuate "," (map render args)))
 
 instance Render Value where
     render = \case
@@ -668,3 +669,4 @@ instance Render Literal where
     render = \case
         Number num  -> P.number num
         String text -> P.string text
+        Unit        -> P.note (P.Literal P.Unit) "Unit"
