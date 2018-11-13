@@ -89,21 +89,21 @@ types = do
     _      <- try (mapLeft prettyShow (Type.validate   result))
     return result
 
-ir :: Command IR.Block
+ir :: Command [IR.Function]
 ir = do
-    result <- liftM IR.translate (todo types)
+    result <- liftM (map IR.translateFunction) types
     _      <- try (mapLeft prettyShow (IR.validate result))
     opt    <- liftM optimize arguments
     if opt
         then do
-            let optimized = IR.eliminateTrivialBlocks result
+            let optimized = map (modify (field @"functionBody") IR.eliminateTrivialBlocks) result
             _ <- try (mapLeft prettyShow (IR.validate optimized))
             return optimized
         else do
             return result
 
 llvmAst :: Command LLVM.Module
-llvmAst = liftM LLVM.translate ir
+llvmAst = liftM LLVM.translateFunctions ir
 
 llvmContextAndModule :: Command (L.Context, L.Module)
 llvmContextAndModule = do

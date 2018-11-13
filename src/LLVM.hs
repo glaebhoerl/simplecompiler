@@ -3,7 +3,7 @@
 -- would not be incomplete, but ¯\_(ツ)_/¯)
 {-# OPTIONS_GHC -Wno-incomplete-record-updates #-}
 
-module LLVM (translate, Module) where
+module LLVM (translateFunctions, Module) where
 
 import MyPrelude
 
@@ -26,6 +26,7 @@ import LLVM.AST.Type     (i1, i8, i32, i64, ptr)
 
 import qualified Pretty
 import qualified Name
+import qualified Type
 import qualified IR
 
 
@@ -36,8 +37,8 @@ instance Pretty.Render Module where
     render = Pretty.pretty . showText
     outputWithStyle _ handle = hPutStr handle . showText
 
-translate :: IR.Block -> Module
-translate block = result where
+translateFunctions :: [IR.Function] -> Module
+translateFunctions functions = result where
     result      = L.defaultModule { L.moduleDefinitions = definitions }
     definitions = map L.GlobalDefinition (fst (runTwoPass generate))
     generate :: LLVM m => m ()
@@ -45,7 +46,7 @@ translate block = result where
         emitGlobal externPrintf
         emitGlobal externScanf
         emitBlock "return" $ do
-            let returnArg = IR.Name (IR.LetID 0) IR.Int ""
+            let returnArg = IR.Name (IR.ID 0) Type.Int ""
             translateArguments [returnArg]
             returnValue64 <- load returnArg
             let instr = L.Trunc {
@@ -58,6 +59,7 @@ translate block = result where
             let returnValue32 = LocalReference i32 returnName32
             return (L.Ret { L.returnOperand = Just returnValue32, L.metadata' = [] }, [])
         emitBlock "start" $ do -- NOTE the name "start" is significant (to `runTwoPass`)
+            let block = todo
             translateBlock block
     externPrintf = L.functionDefaults {
         LG.name        = "printf",
@@ -88,26 +90,24 @@ data CalledByBlockWith = CalledByBlockWith {
     argumentsReceived :: ![Operand]
 } deriving (Generic, Eq, Show)
 
-translatedType :: IR.Type IR.Expression -> L.Type
+translatedType :: IR.Type -> L.Type
 translatedType = \case
-    IR.Bool -> i1
-    IR.Int  -> i64
-    IR.Text -> ptr i8
+    Type.Bool -> i1
+    Type.Int  -> i64
+    Type.Text -> ptr i8
 
-allocaForLet :: IR.Name IR.Expression -> Operand
+allocaForLet :: IR.Name -> Operand
 allocaForLet (IR.Name ident nameType _) = LocalReference (ptr (translatedType nameType)) (translatedID ident)
 
-translatedID :: IR.ID node -> L.Name
+translatedID :: IR.ID -> L.Name
 translatedID = \case
-    IR.LetID   num  -> L.mkName (show num)
-    IR.BlockID num  -> L.mkName (show num)
+    IR.ID      num  -> L.mkName (show num)
     IR.ASTName name -> L.mkName (textToString (Name.qualifiedName name))
-    IR.Return       -> "return"
 
-alloca :: LLVM m => IR.Name IR.Expression -> m ()
+alloca :: LLVM m => IR.Name -> m ()
 alloca (IR.Name ident nameType _) = emitAlloca (translatedType nameType) (translatedID ident)
 
-load :: LLVM m => IR.Name IR.Expression -> m Operand
+load :: LLVM m => IR.Name -> m Operand
 load name = do
     newName <- freshName
     let instr = L.Load {
@@ -120,7 +120,7 @@ load name = do
     emit (newName := instr)
     return (LocalReference (translatedType (IR.nameType name)) newName)
 
-store :: LLVM m => IR.Name IR.Expression -> Operand -> m ()
+store :: LLVM m => IR.Name -> Operand -> m ()
 store name operand = do
     let instr = L.Store {
         L.volatile       = False,
@@ -186,7 +186,8 @@ translateExpression expr = let localRef = LocalReference (translatedType (IR.typ
         newName  <- freshName
         emit (newName := translateBinaryOp operand1 operand2 op)
         return (localRef newName)
-    IR.Ask value -> do
+    IR.Call fn args -> do
+        let value = todo
         operand     <- translateValue value
         printFormat <- translateStringLiteral "%s "
         emit (Do (call printf [printFormat, operand]))
@@ -260,6 +261,7 @@ translateStatement = \case
     IR.Assign name value -> do
         operand <- translateValue value
         store name operand
+    {-
     IR.Say value -> do
         formatPtr <- translateStringLiteral "%s\n"
         operand   <- translateValue value
@@ -268,6 +270,7 @@ translateStatement = \case
         formatPtr <- translateStringLiteral "%lld\n"
         operand   <- translateValue value
         emit (Do (call printf [formatPtr, operand]))
+    -}
 
 call :: Operand -> [Operand] -> Instruction
 call callee args = L.Call {
@@ -292,7 +295,7 @@ translateBlock IR.Block { IR.arguments, IR.body, IR.transfer } = do
     mapM_ translateStatement body
     translateTransfer transfer
 
-translateArguments :: LLVM m => [IR.Name IR.Expression] -> m ()
+translateArguments :: LLVM m => [IR.Name] -> m ()
 translateArguments arguments = do
     -- [For each calling block: CalledByBlockWith { callingBlock = block's name, argumentsReceived = [values it passed for arguments] }]
     calledByBlocks <- getArguments
@@ -342,7 +345,7 @@ translateTransfer = \case
 translateTarget :: LLVM m => IR.Target -> m CallsBlockWith
 translateTarget IR.Target { IR.targetBlock, IR.targetArgs } = do
     operands <- mapM translateValue targetArgs
-    return CallsBlockWith { calledBlock = translatedID (IR.ident targetBlock), argumentsPassed = operands }
+    return CallsBlockWith { calledBlock = translatedID (IR.nameID targetBlock), argumentsPassed = operands }
 
 
 

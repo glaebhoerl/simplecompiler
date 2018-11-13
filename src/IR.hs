@@ -1,7 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-} -- for `idIsEven`
 
 module IR (
-    ID (..), NameWithType (..), Name, BlockName,
+    Type, BlockType (..), ID (..), NameWithType (..), Name, BlockName,
     Literal (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), Function (..),
     typeOf, typeOfBlock, translateFunction, validate, eliminateTrivialBlocks
 ) where
@@ -461,8 +461,11 @@ data ValidationError
     | CallOfNonFunction  !Expression
     deriving (Generic, Show)
 
-validate :: Block -> Either ValidationError ()
-validate = runExcept . evalStateT [Map.empty] . checkBlock (BlockType []) where
+validate :: [Function] -> Either ValidationError ()
+validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
+    checkFunction Function { functionID, functionBody, returnType } = do
+        todo functionID returnType
+        checkBlock (BlockType todo) functionBody
     checkBlock expectedType block = do
         checkBlockType expectedType block
         modifyState (prepend Map.empty)
@@ -635,6 +638,12 @@ instance Render ID where
 
 instance Render Name where
     render name = letId P.Definition name ++ P.colon ++ " " ++ render (nameType name)
+
+instance Render [Function] where
+    render = mconcat . P.punctuate P.hardline . map render
+
+instance Render Function where
+    render = todo
 
 instance Render Block where
     render block = renderBody (body block) (transfer block)

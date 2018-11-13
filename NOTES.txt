@@ -455,19 +455,14 @@ otoh what's the point of translating the source program to globally unique names
 TODO
   clean up "P.note (P.Identifier (P.IdentInfo ..." and similar ugliness?
   IR: fix syntax highlighting of `return` as a keyword
-  rename project...
 
 TODO
   make IDs follow each other in program order
-  implement breaks
   implement astname-preservation for logical ops
   keep let/var distinction in IR?
   make `load`s from `var`s explicit? (simplifies translation to LLVM?)
   do SSA conversion on the IR?
   only ASTNames should become allocas!! temporaries can just become plain operands!
-  --
-  other optimization passes?
-  text-path-utf8 (safe-exceptions?)
 
 Babby's First Compiler
   why haskell and not rust
@@ -493,8 +488,6 @@ Babby's First Compiler
 
 
 TODO
-  fix adder.src -- some problem with dead transfer at end of main after a `forever`?
   nicer fix for innermostBlock assert
   make a lens alias for innermostBlock . blah?
-  prettyprinting lost block descriptions, current fix is ugly, make it nicer (how did it work earlier?)
-  rename to "democompiler" or something
+  prettyprinting lost the block descriptions, current fix is ugly, make it nicer (how did it work earlier?)
