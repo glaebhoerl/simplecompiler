@@ -214,18 +214,18 @@ checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.b
 
 data ControlFlow = ControlFlow {
     definitelyReturns :: !Bool,
-    mightBreak        :: !Bool
+    potentiallyBreaks :: !Bool
 }
 
 instance Semigroup ControlFlow where
     prev <> next = ControlFlow returns breaks where
-        returns = definitelyReturns prev || (not (mightBreak        prev) && definitelyReturns next)
-        breaks  = mightBreak        prev || (not (definitelyReturns prev) && mightBreak        next)
+        returns = definitelyReturns prev || (not (potentiallyBreaks prev) && definitelyReturns next)
+        breaks  = potentiallyBreaks prev || (not (definitelyReturns prev) && potentiallyBreaks next)
 
 instance Monoid ControlFlow where
     mempty = ControlFlow False False
 
-controlFlow :: AST.Block (NameWith info) -> ControlFlow
+controlFlow :: Eq name => AST.Block name -> ControlFlow
 controlFlow = mconcat . map statementControlFlow . AST.statements where
     statementControlFlow = \case
         AST.Return {} ->
@@ -241,7 +241,7 @@ controlFlow = mconcat . map statementControlFlow . AST.statements where
         AST.While {} ->
             ControlFlow False False -- loops can't currently break out of the /outer/ context
         AST.IfThen _ block ->
-            ControlFlow False (mightBreak (controlFlow block))
+            ControlFlow False (potentiallyBreaks (controlFlow block))
         AST.IfThenElse _ block1 block2 ->
             ControlFlow (returns1 && returns2) (breaks1 || breaks2) where
                 ControlFlow returns1 breaks1 = controlFlow block1
@@ -267,7 +267,7 @@ checkTypes ast = do
     nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkFunction) ast
     let makeNameTyped (NameWith name _) = NameWith name (assert (oneOf [tryLookup, tryBuiltin])) where
             tryLookup  = fmap SmallType     (Map.lookup name nameToTypeMap)
-            tryBuiltin = fmap typeOfBuiltin (getWhen (constructor @"BuiltinName") name)
+            tryBuiltin = fmap typeOfBuiltin (match @"BuiltinName" name)
     return (map (fmap makeNameTyped) ast)
 
 instance TypeCheckM TypeCheck where
