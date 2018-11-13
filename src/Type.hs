@@ -1,4 +1,4 @@
-module Type (LargeType (..), Type (..), TypedName, Error (..), TypeMismatch (..), checkTypes, typeOf, ValidationError, validate) where
+module Type (LargeType (..), Type (..), TypedName, Error (..), TypeMismatch (..), checkTypes, typeOf, ValidationError (..), validate) where
 
 import MyPrelude
 
@@ -33,8 +33,10 @@ type TypedName = NameWith LargeType
 typeOf :: AST.Expression TypedName -> Type
 typeOf = \case
     AST.Named name -> case Name.info name of
-        SmallType smallType -> smallType
-        Type                -> bug "Expression of type Type in typed AST"
+        SmallType smallType ->
+            smallType
+        Type ->
+            bug "Expression of type Type in typed AST"
     AST.NumberLiteral _ ->
         Int
     AST.TextLiteral _ ->
@@ -49,9 +51,12 @@ typeOf = \case
             ComparisonOperator _ -> Bool
             LogicalOperator    _ -> Bool
     AST.Call name _ -> case Name.info name of
-        SmallType (Function _ returnType) -> returnType
-        SmallType _                       -> bug "Call of non-function in typed AST"
-        Type                              -> bug "Expression of type Type in typed AST"
+        SmallType (Function _ returnType) ->
+            returnType
+        SmallType _ ->
+            bug "Call of non-function in typed AST"
+        Type ->
+            bug "Expression of type Type in typed AST"
 
 
 
@@ -93,7 +98,7 @@ instance AST.RenderName TypedName where
 -- such as the context
 -- wonder how to formulate that...
 data Error
-    = TypeError (TypeMismatch (AST.Expression ResolvedName))
+    = TypeError TypeMismatch
     | CallOfNonFunction -- TODO
     | WrongNumberOfArguments -- TODO
     | FunctionWithoutReturn -- TODO
@@ -103,10 +108,10 @@ data Error
     | LiteralOutOfRange
     deriving (Generic, Show)
 
-data TypeMismatch node = TypeMismatch {
+data TypeMismatch = TypeMismatch {
     expectedType :: Type,
     actualType   :: Type,
-    expression   :: node
+    expression   :: AST.Expression ResolvedName
 } deriving (Generic, Show)
 
 class Monad m => TypeCheckM m where
@@ -184,10 +189,9 @@ checkStatement = \case
         checkBlock      Unit block
     AST.Return target maybeExpr -> do
         returnType <- lookupType target
-        case (returnType, maybeExpr) of
-            (expectedType, Just expr) -> checkExpression expectedType expr
-            (Unit,         Nothing)   -> return ()
-            (expectedType, Nothing)   -> reportError (TypeError TypeMismatch { expectedType, actualType = Unit, expression = AST.Named target {-HACK-} })
+        mapM_ (checkExpression returnType) maybeExpr
+        when (maybeExpr == Nothing) $ do
+            checkExpression Unit (AST.Named target) -- HACK
     AST.Break target -> do
         breakType <- lookupType target
         assertEqM breakType Unit
@@ -309,25 +313,42 @@ builtinAsType = \case
 
 ------------------------------------------------------------------------ validation
 
-type ValidationError = TypeMismatch (AST.Expression TypedName)
+-- TODO check presence/absence of exit targets (or in Name.validate??)
+data ValidationError
+    = ExpectedType !LargeType !(AST.Expression TypedName)
+    | ExpectedFunction !(AST.Expression TypedName)
+    | ExpectedArgumentCount !Int ![AST.Expression TypedName]
+    deriving (Generic, Show)
 
 -- This checks that:
 --  * The AST is locally well-typed at each point, based on the types stored within `Name`s.
--- TODO check type annotations also
+--  * The explicitly-written type annotations in the AST are accurate.
 -- This does NOT check that:
 --  * Names are actually in scope, and the info stored in `Name`s is consistent. Use `Name.validate` for that!
 --  * Literals are within range, and assignments match their binding types.
 validate :: AST TypedName -> Either ValidationError ()
-validate _ = Right () -- TODO!!
-{-
 validate = runExcept . mapM_ validateFunction where
-    validateFunction f = validateBlock (AST.body f) -- TODO
+    validateFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
+        let getNameAsType = assert . builtinAsType . assert . match @"BuiltinName" . Name.name -- not very nice... :/
+        forM_ arguments $ \AST.Argument { AST.argumentName, AST.argumentType } -> do
+            validateType argumentType
+            check (getNameAsType argumentType) (AST.Named argumentName)
+        mapM_ validateType returns
+        let functionType = Function argTypes returnType
+            argTypes     = map (typeOf . AST.Named . AST.argumentName) arguments
+            returnType   = maybe Unit getNameAsType returns
+        check functionType (AST.Named functionName)
+        mapM_ (check returnType . AST.Named) (AST.exitTarget body) -- TODO check that it's Just!
+        validateBlock body
+    validateType typeName = do
+        when (Name.info typeName != Type) $ do
+            throwError (ExpectedType Type (AST.Named typeName))
     validateBlock = mapM_ validateStatement . AST.statements
     validateStatement = \case
         AST.Binding _ (NameWith _ ty) expr -> do
-            check ty expr
+            checkLarge ty expr
         AST.Assign (NameWith _ ty) expr -> do
-            check ty expr
+            checkLarge ty expr
         AST.IfThen expr body -> do
             check Bool expr
             validateBlock body
@@ -339,12 +360,14 @@ validate = runExcept . mapM_ validateFunction where
         AST.While expr body -> do
             check Bool expr
             validateBlock body
-        AST.Return maybeExpr -> do
-            mapM_ (check Int) maybeExpr
-        AST.Break -> do
-            return ()
+        AST.Return target maybeExpr -> do
+            mapM_ (check (typeOf (AST.Named target))) maybeExpr
+            when (maybeExpr == Nothing) $ do
+                check Unit (AST.Named target) -- HACK
+        AST.Break target -> do
+            check Unit (AST.Named target)
         AST.Expression expr -> do
-            check todo expr
+            validateExpression expr
     validateExpression = \case
         AST.UnaryOperator op expr -> do
             check opExpectsType expr where
@@ -363,10 +386,16 @@ validate = runExcept . mapM_ validateFunction where
             return ()
         AST.TextLiteral _ -> do
             return ()
-        AST.Call function exprs -> do
-            todo function exprs
-    check expectedType expr = do
-        when (typeOf expr != expectedType) $ do
-            throwError (TypeMismatch expectedType (typeOf expr) expr)
+        AST.Call function args -> do
+            case typeOf (AST.Named function) of
+                Function argTypes _ -> do
+                    when (length args != length argTypes) $ do
+                        throwError (ExpectedArgumentCount (length argTypes) args)
+                    zipWithM_ check argTypes args
+                _ -> do
+                    throwError (ExpectedFunction (AST.Named function))
+    check = checkLarge . SmallType
+    checkLarge expectedType expr = do
+        when (SmallType (typeOf expr) != expectedType) $ do -- FIXME maybe `validate` shouldn't panic if it sees a `Type` in the wrong place, as `typeOf` does!!
+            throwError (ExpectedType expectedType expr)
         validateExpression expr
--}
