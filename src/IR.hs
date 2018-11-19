@@ -129,7 +129,7 @@ class Monad m => TranslateM m where
     emitStatement      :: Statement -> m ()
     emitLet            :: Maybe Type.TypedName -> Expression -> m Name
     emitBlock          :: Text -> BlockType -> m Transfer -> m BlockName
-    emitContinuation   :: Either Type.TypedName (Text, BlockType) -> m BlockName
+    withContinuation   :: Either Type.TypedName (Text, BlockType) -> (BlockName -> m Transfer) -> m ()
     emitTransfer       :: Transfer -> m ()
     currentBlock       :: m BlockName
     currentArguments   :: m [Name]
@@ -169,15 +169,16 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
     AST.BinaryOperator expr1 (LogicalOperator op) expr2 | (expr2 `isn't` constructor @"NumberLiteral" && expr2 `isn't` constructor @"Named") -> do
         value1 <- translateTemporary expr1
         let opName = toLower (showText op)
-        joinPoint <- emitContinuation (Right ("join_" ++ opName, BlockType [Type.Bool])) -- TODO use the provided name for the arg!
-        rhsBlock <- emitBlock opName (BlockType []) $ do
-            value2 <- translateTemporary expr2
-            return (Jump (Target joinPoint [value2]))
-        let branches = case op of
-                And -> [Target joinPoint [value1], Target rhsBlock  []]
-                Or  -> [Target rhsBlock  [],       Target joinPoint [value1]]
-        emitTransfer (Branch value1 branches)
-        args <- currentArguments
+        -- TODO use the provided name for the arg!
+        withContinuation (Right ("join_" ++ opName, BlockType [Type.Bool])) $ \joinPoint -> do
+            rhsBlock <- emitBlock opName (BlockType []) $ do
+                value2 <- translateTemporary expr2
+                return (Jump (Target joinPoint [value2]))
+            let branches = case op of
+                    And -> [Target joinPoint [value1], Target rhsBlock  []]
+                    Or  -> [Target rhsBlock  [],       Target joinPoint [value1]]
+            return (Branch value1 branches)
+        args <- currentArguments -- (TODO this still works right?)
         return (Named (assert (head args)))
     AST.BinaryOperator expr1 op expr2 -> do
         value1 <- translateTemporary expr1
@@ -201,38 +202,38 @@ translateStatement = \case
         emitStatement (Assign translatedName value)
     AST.IfThen expr block -> do
         value <- translateTemporary expr
-        joinPoint <- emitContinuation (Right ("join_if", BlockType []))
-        thenBlock <- emitBlock "if" (BlockType []) $ do
-            translateStatements block
-            return (Jump (Target joinPoint []))
-        emitTransfer (Branch value [Target joinPoint [], Target thenBlock []])
+        withContinuation (Right ("join_if", BlockType [])) $ \joinPoint -> do
+            thenBlock <- emitBlock "if" (BlockType []) $ do
+                translateStatements block
+                return (Jump (Target joinPoint []))
+            return (Branch value [Target joinPoint [], Target thenBlock []])
     AST.IfThenElse expr block1 block2 -> do
         value <- translateTemporary expr
-        joinPoint <- emitContinuation (Right ("join_if_else", BlockType []))
-        thenBlock <- emitBlock "if" (BlockType []) $ do
-            translateStatements block1
-            return (Jump (Target joinPoint []))
-        elseBlock <- emitBlock "else" (BlockType []) $ do
-            translateStatements block2
-            return (Jump (Target joinPoint []))
-        emitTransfer (Branch value [Target elseBlock [], Target thenBlock []])
+        withContinuation (Right ("join_if_else", BlockType [])) $ \joinPoint -> do
+            thenBlock <- emitBlock "if" (BlockType []) $ do
+                translateStatements block1
+                return (Jump (Target joinPoint []))
+            elseBlock <- emitBlock "else" (BlockType []) $ do
+                translateStatements block2
+                return (Jump (Target joinPoint []))
+            return (Branch value [Target elseBlock [], Target thenBlock []])
     AST.Forever block -> do
-        emitContinuation (Left (assert (AST.exitTarget block)))
-        foreverBlock <- emitBlock "forever" (BlockType []) $ do
-            blockBody <- currentBlock
-            translateStatements block
-            return (Jump (Target blockBody []))
-        emitTransfer (Jump (Target foreverBlock []))
-    AST.While expr block -> do
-        joinPoint <- emitContinuation (Left (assert (AST.exitTarget block)))
-        whileBlock <- emitBlock "while" (BlockType []) $ do
-            conditionTest <- currentBlock
-            blockBody <- emitBlock "while_body" (BlockType []) $ do
+        withContinuation (Left (assert (AST.exitTarget block))) $ \_ -> do
+            foreverBlock <- emitBlock "forever" (BlockType []) $ do
+                blockBody <- currentBlock
                 translateStatements block
-                return (Jump (Target conditionTest []))
-            value <- translateTemporary expr
-            return (Branch value [Target joinPoint [Literal Unit], Target blockBody []])
-        emitTransfer (Jump (Target whileBlock []))
+                return (Jump (Target blockBody []))
+            return (Jump (Target foreverBlock []))
+    AST.While expr block -> do
+        withContinuation (Left (assert (AST.exitTarget block))) $ \joinPoint -> do
+            whileBlock <- emitBlock "while" (BlockType []) $ do
+                conditionTest <- currentBlock
+                blockBody <- emitBlock "while_body" (BlockType []) $ do
+                    translateStatements block
+                    return (Jump (Target conditionTest []))
+                value <- translateTemporary expr
+                return (Branch value [Target joinPoint [Literal Unit], Target blockBody []])
+            return (Jump (Target whileBlock []))
     AST.Return target maybeExpr -> do
         translatedTarget <- translateBlockName target
         maybeValue       <- mapM translateTemporary maybeExpr
@@ -251,7 +252,7 @@ translateStatements = mapM_ translateStatement . AST.statements
 
 translateFunction :: AST.Function Type.TypedName -> Function
 translateFunction = evalState initialState . runTranslate . translate where
-    initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" [] [] NoContinuation (Just (innermostBlock initialState)) } -- HACK
+    initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" [] [] Nothing (Just (innermostBlock initialState)) } -- HACK
     translate AST.Function { AST.functionName, AST.arguments, AST.body = functionBody } = do
         -- TODO clean this whole thing up maybe somehow
         let exitTarget    = assert (AST.exitTarget functionBody)
@@ -287,15 +288,9 @@ data BlockState = BlockState {
     blockDescription  :: !Text,
     blockArguments    :: ![Name],
     statements        :: ![Statement],
-    continuationState :: !ContinuationState,
+    emittedTransfer   :: !(Maybe Transfer), -- this is `Just` iff we are currently processing the continuation of the block
     enclosingBlock    :: !(Maybe BlockState)
 } deriving (Generic, Eq, Show)
-
-data ContinuationState
-    = NoContinuation
-    | EmittedContinuation !BlockState -- the `enclosingBlock` field is left `Nothing`, filled in later!
-    | EmittedTransfer     !Transfer
-    deriving (Generic, Eq, Show)
 
 data IDSort = LetID | BlockID
 
@@ -353,16 +348,16 @@ instance TranslateM Translate where
     emitBlock description argTypes translateBody = do
         blockID <- newID BlockID
         args    <- newArgumentIDs argTypes
-        modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] NoContinuation (Just previouslyInnermost))
+        modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing (Just previouslyInnermost))
         blockName <- currentBlock
         transferAtEnd <- translateBody
         emitTransfer transferAtEnd -- this will handle popping and emitting the finished block
         return blockName
 
-    emitContinuation :: Either Type.TypedName (Text, BlockType) -> Translate BlockName
-    emitContinuation blockSpec = do
-        alreadyEmitted <- getM (field @"innermostBlock" . field @"continuationState")
-        assertEqM alreadyEmitted NoContinuation
+    withContinuation :: Either Type.TypedName (Text, BlockType) -> (BlockName -> Translate Transfer) -> Translate ()
+    withContinuation blockSpec inBetweenCode = do
+        alreadyEmitted <- getM (field @"innermostBlock" . field @"emittedTransfer")
+        assertEqM alreadyEmitted Nothing
         nextBlockName <- case blockSpec of
             Left nextBlockAstName -> do
                 translateBlockName nextBlockAstName
@@ -372,8 +367,10 @@ instance TranslateM Translate where
         nextBlockArgs <- newArgumentIDs (nameType nextBlockName)
         let nextBlockStub = Block { arguments = nextBlockArgs, body = [], transfer = Jump (Target (Name (ID -1) (BlockType []) "") []) }
         emitStatement (BlockDecl nextBlockName nextBlockStub)
-        setM (field @"innermostBlock" . field @"continuationState") (EmittedContinuation (BlockState (nameID nextBlockName) (description nextBlockName) nextBlockArgs [] NoContinuation Nothing))
-        return nextBlockName
+        transfer <- inBetweenCode nextBlockName -- TODO if any `emitTransfer` is done in here, it's a `bug`!
+        setM (field @"innermostBlock" . field @"emittedTransfer") (Just transfer)
+        modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState (nameID nextBlockName) (description nextBlockName) nextBlockArgs [] Nothing (Just previouslyInnermost))
+        return ()
 
     -- does this black have an emitted continuation?
     --   yes -> push a new block with this block as the parent block, with the name/args of the emitted continuation
@@ -383,27 +380,21 @@ instance TranslateM Translate where
     --      no  -> pop this block, append this block as a blockdecl statement to the parent block
     emitTransfer :: Transfer -> Translate ()
     emitTransfer transfer = do
-        BlockState { blockArguments, statements, continuationState } <- getM (field @"innermostBlock")
-        case continuationState of
-            EmittedTransfer _ -> bug "Transfer already emitted!"
-            EmittedContinuation continuationBlock -> do
-                setM (field @"innermostBlock" . field @"continuationState") (EmittedTransfer transfer)
-                modifyM (field @"innermostBlock") (\previouslyInnermost -> continuationBlock { enclosingBlock = Just previouslyInnermost })
-                return ()
-            NoContinuation -> do
-                blockName <- currentBlock
-                let finishedBlock = Block blockArguments statements transfer
-                modifyM (field @"innermostBlock") (assert . enclosingBlock)
-                parentContinuationState <- getM (field @"innermostBlock" . field @"continuationState")
-                case parentContinuationState of
-                    EmittedTransfer parentTransfer -> do
-                        modifyM (field @"innermostBlock" . field @"statements") $ map $ \case
-                            BlockDecl name _ | name == blockName -> BlockDecl blockName finishedBlock
-                            otherStatement                       -> otherStatement
-                        setM (field @"innermostBlock" . field @"continuationState") NoContinuation
-                        emitTransfer parentTransfer
-                    _ -> do
-                        emitStatement (BlockDecl blockName finishedBlock)
+        BlockState { blockArguments, statements, emittedTransfer } <- getM (field @"innermostBlock")
+        assertEqM emittedTransfer Nothing
+        blockName <- currentBlock
+        let finishedBlock = Block blockArguments statements transfer
+        modifyM (field @"innermostBlock") (assert . enclosingBlock)
+        parentEmittedTransfer <- getM (field @"innermostBlock" . field @"emittedTransfer")
+        case parentEmittedTransfer of
+            Just parentTransfer -> do
+                modifyM (field @"innermostBlock" . field @"statements") $ map $ \case
+                    BlockDecl name _ | name == blockName -> BlockDecl blockName finishedBlock
+                    otherStatement                       -> otherStatement
+                setM (field @"innermostBlock" . field @"emittedTransfer") Nothing
+                emitTransfer parentTransfer
+            _ -> do
+                emitStatement (BlockDecl blockName finishedBlock)
 
     currentBlock :: Translate BlockName
     currentBlock = do
@@ -466,7 +457,7 @@ data ValidationError
     | BlockInconsistent  !BlockName !BlockName
     | TypeMismatch       !Type      !Expression
     | BlockTypeMismatch  !BlockType !Block
-    | BadTargetCount     ![Target]
+    | BadTargetCount     !Transfer
     | BadTargetArgsCount !Target
     | BadCallArgsCount   !Expression
     | CallOfNonFunction  !Expression
@@ -530,7 +521,7 @@ validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
         Branch value targets -> do
             checkValue Type.Bool value
             when (length targets != 2) $ do
-                throwError (BadTargetCount targets)
+                throwError (BadTargetCount (Branch value targets))
             mapM_ checkTarget targets
     checkTarget target@Target { targetBlock, targetArgs } = do
         checkBlockName targetBlock
