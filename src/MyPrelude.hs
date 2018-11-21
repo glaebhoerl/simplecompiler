@@ -17,7 +17,7 @@ import Data.Maybe                       as Reexports        (isJust, isNothing, 
 import Data.List                        as Reexports        (uncons, intercalate)
 import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
-import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, (>=>), (<=<), forever, void, join, guard, when, unless)
+import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, (>=>), (<=<), forever, join, guard, when, unless)
 import Control.Monad.Fix                as Reexports        (MonadFix   (mfix))
 import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
 import Control.Monad.IO.Class           as Reexports        (MonadIO    (liftIO))
@@ -125,9 +125,40 @@ doTry action = do
     try result
 
 whenM :: Monad m => m Bool -> m () -> m ()
-whenM conditionAction action = do
-    condition <- conditionAction
-    when condition action
+whenM condition action = do
+    result <- condition
+    when result action
+
+repeatM :: Monad m => m Bool -> m ()
+repeatM condition = whenM condition (repeatM condition)
+
+whileM :: Monad m => m Bool -> m a -> m ()
+whileM condition action = do
+    whenM condition $ do
+        unused action
+        whileM condition action
+
+whileJustM :: Monad m => a -> (a -> m (Maybe a)) -> m ()
+whileJustM a action = do
+    result <- action a
+    case result of
+        Just a  -> whileJustM a action
+        Nothing -> return ()
+
+whileRightM :: Monad m => a -> (Either a c -> m (Either b c)) -> m b
+whileRightM = impl . Left where
+    impl input action = do
+        result <- action input
+        case result of
+            Right c -> impl (Right c) action
+            Left  b -> return b
+
+unfoldM :: Monad m => m (Maybe a) -> m [a]
+unfoldM action = do
+    result <- action
+    case result of
+        Just a  -> liftM (prepend a) (unfoldM action)
+        Nothing -> return []
 
 unused :: Functor m => m a -> m ()
 unused = fmap (const ())
