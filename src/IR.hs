@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-} -- for `idIsEven`
-
 module IR (
     Type, BlockType (..), ID (..), NameWithType (..), Name, BlockName,
     Literal (..), Value (..), Expression (..), Statement (..), Block (..), Transfer (..), Target (..), Function (..),
@@ -124,8 +122,6 @@ typeOfBlock = BlockType . map nameType . arguments
 ---------------------------------------------------------------------------------------------------- TRANSLATION FRONTEND
 
 class Monad m => TranslateM m where
-    translateName      :: Type.TypedName -> m Name
-    translateBlockName :: Type.TypedName -> m BlockName
     emitStatement      :: Statement -> m ()
     emitLet            :: Maybe Type.TypedName -> Expression -> m Name
     emitBlock          :: Text -> BlockType -> m Transfer -> m BlockName
@@ -143,8 +139,7 @@ translateBinding = translateExpression . Just
 translateExpression :: TranslateM m => Maybe Type.TypedName -> AST.Expression Type.TypedName -> m Value
 translateExpression providedName = let emitNamedLet = emitLet providedName in \case
     AST.Named name -> do
-        translatedName <- translateName name
-        return (Named translatedName)
+        return (Named (translateName name))
     AST.NumberLiteral num -> do
         let value = Literal (Number (fromIntegral num))
         if isJust providedName
@@ -186,9 +181,8 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         name   <- emitNamedLet (BinaryOperator value1 op value2)
         return (Named name)
     AST.Call function exprs -> do
-        fn     <- translateName function
         values <- mapM translateTemporary exprs
-        name   <- emitNamedLet (Call (Named fn) values)
+        name   <- emitNamedLet (Call (Named (translateName function)) values)
         return (Named name)
 
 translateStatement :: TranslateM m => AST.Statement Type.TypedName -> m ()
@@ -197,9 +191,8 @@ translateStatement = \case
         _ <- translateBinding name expr
         return ()
     AST.Assign name expr -> do
-        translatedName <- translateName name
         value <- translateTemporary expr
-        emitStatement (Assign translatedName value)
+        emitStatement (Assign (translateName name) value)
     AST.IfThen expr block -> do
         value <- translateTemporary expr
         withContinuation (Right ("join_if", BlockType [])) $ \joinPoint -> do
@@ -235,12 +228,10 @@ translateStatement = \case
                 return (Branch value [Target joinPoint [Literal Unit], Target blockBody []])
             return (Jump (Target whileBlock []))
     AST.Return target maybeExpr -> do
-        translatedTarget <- translateBlockName target
         maybeValue       <- mapM translateTemporary maybeExpr
-        emitTransfer (Jump (Target translatedTarget [fromMaybe (Literal Unit) maybeValue]))
+        emitTransfer (Jump (Target (translateBlockName target) [fromMaybe (Literal Unit) maybeValue]))
     AST.Break target -> do
-        translatedTarget <- translateBlockName target
-        emitTransfer (Jump (Target translatedTarget []))
+        emitTransfer (Jump (Target (translateBlockName target) [Literal Unit]))
     AST.Expression expr -> do
         unused (translateTemporary expr)
 
@@ -250,28 +241,37 @@ translateStatements = mapM_ translateStatement . AST.statements
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND
 
+translateName :: Type.TypedName -> Name
+translateName (Name.NameWith name ty) = Name (ASTName name) (translatedType ty) (Name.unqualifiedName name) where
+    translatedType = \case
+        Type.SmallType ty -> ty
+        Type.Type         -> bug "Use of typename as local"
+
+-- TODO it's not clear in when we should copy the `unqualifiedName` as the `description` and when not...?
+-- right now it's inconsistent between lets and blocks
+
+translateBlockName :: Type.TypedName -> BlockName
+translateBlockName (Name.NameWith name ty) = Name (ASTName name) (translatedType ty) "" where
+    translatedType = \case
+        Type.SmallType ty -> BlockType [ty]
+        Type.Type         -> bug "Use of typename as exit target"
+
 translateFunction :: AST.Function Type.TypedName -> Function
-translateFunction = evalState initialState . runTranslate . translate where
-    initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" [] [] Nothing (Just (innermostBlock initialState)) } -- HACK
-    translate AST.Function { AST.functionName, AST.arguments, AST.body = functionBody } = do
-        -- TODO clean this whole thing up maybe somehow
-        let exitTarget    = assert (AST.exitTarget functionBody)
-        let rootBlockType = BlockType (map (Type.typeOf . AST.Named . AST.argumentName) arguments)
-        returnBlock   <- translateBlockName exitTarget
-        rootBlockID   <- newID BlockID
-        rootBlockArgs <- mapM (translateName . AST.argumentName) arguments
-        let rootBlockName = Name rootBlockID rootBlockType "root"
-        setM (field @"innermostBlock" . field @"blockID") rootBlockID
-        setM (field @"innermostBlock" . field @"blockDescription") "root"
-        setM (field @"innermostBlock" . field @"blockArguments") rootBlockArgs
-        translateStatements functionBody
-        when (Type.typeOf (AST.Named exitTarget) == Type.Unit) $ do
-            emitTransfer (Jump (Target returnBlock [Literal Unit]))
-        getM (field @"innermostBlock") >>= (traceM . stringToText . take 10000 . show)
-        -- FIXME HACK
-        rootBlockDecl <- liftM (assert . match @"BlockDecl" . assert . head . statements . innermostBlock) getState
-        assertEqM (fst rootBlockDecl) rootBlockName
-        let functionBody = snd rootBlockDecl
+translateFunction AST.Function { AST.functionName, AST.arguments, AST.body = functionBody } = result where
+    result        = evalState initialState (runTranslate translateImpl)
+    initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" rootBlockArgs [] Nothing Nothing }
+    rootBlockArgs = map (translateName . AST.argumentName) arguments
+    exitTarget    = assert (AST.exitTarget functionBody)
+    returnBlock   = translateBlockName exitTarget
+    translateImpl = do
+        -- this means a somewhat-redundant additional block will be emitted as the body, but, it works
+        bodyBlockName <- emitBlock "body" (BlockType []) $ do
+            translateStatements functionBody
+            return (Jump (Target returnBlock [Literal Unit])) -- will be discarded as dead code when not needed
+        emitTransfer (Jump (Target bodyBlockName []))
+        functionBody <- liftM assert getFinishedBlock
+        blockID <- getM (blockField @"blockID")
+        assertEqM blockID (ID 0)
         return Function { functionID = ASTName (Name.name functionName), functionBody, returnBlock }
 
 newtype Translate a = Translate {
@@ -284,13 +284,22 @@ data TranslateState = TranslateState {
 } deriving (Generic, Eq, Show)
 
 data BlockState = BlockState {
-    blockID           :: !ID,
-    blockDescription  :: !Text,
-    blockArguments    :: ![Name],
-    statements        :: ![Statement],
-    emittedTransfer   :: !(Maybe Transfer), -- this is `Just` iff we are currently processing the continuation of the block
-    enclosingBlock    :: !(Maybe BlockState)
+    blockID          :: !ID,
+    blockDescription :: !Text,
+    blockArguments   :: ![Name],
+    statements       :: ![Statement],
+    emittedTransfer  :: !(Maybe Transfer), -- this is `Just` if we have early-returned and are in dead code, or if we are currently processing the continuation of the block
+    enclosingBlock   :: !(Maybe BlockState)
 } deriving (Generic, Eq, Show)
+
+-- (wonder if there's any nicer solution?)
+blockField :: forall name inner. HasField' name BlockState inner => Lens TranslateState inner
+blockField = field @"innermostBlock" . field @name
+
+getFinishedBlock :: Translate (Maybe Block)
+getFinishedBlock = do
+    BlockState { blockArguments, statements, emittedTransfer } <- getM (field @"innermostBlock")
+    return (fmap (Block blockArguments statements) emittedTransfer)
 
 data IDSort = LetID | BlockID
 
@@ -309,33 +318,27 @@ newArgumentIDs (BlockType argTypes) = do
         argID <- newID LetID
         return (Name argID argType "")
 
+ifDeadCodeThenElse :: a -> Translate a -> Translate a
+ifDeadCodeThenElse thenDefault elseAction = do
+    emittedTransfer <- getM (blockField @"emittedTransfer")
+    case emittedTransfer of
+        Just _  -> return thenDefault
+        Nothing -> elseAction
+
+ifNotDeadCode :: Translate () -> Translate ()
+ifNotDeadCode = ifDeadCodeThenElse ()
+
 instance TranslateM Translate where
-    translateName :: Type.TypedName -> Translate Name -- TODO take these out of the type class?
-    translateName (Name.NameWith name ty) = do
-        return (Name (ASTName name) (translatedType ty) (Name.unqualifiedName name))
-        where translatedType = \case
-                Type.SmallType ty -> ty
-                Type.Type         -> bug "Use of typename as local"
-
-    translateBlockName :: Type.TypedName -> Translate BlockName
-    translateBlockName (Name.NameWith name ty) = do
-        -- TODO it's not clear in when we should copy the `unqualifiedName` as the `description` and when not...?
-        -- right now it's inconsistent between lets and blocks
-        return (Name (ASTName name) (translatedType ty) "")
-        where translatedType = \case
-                Type.SmallType ty -> BlockType [ty]
-                Type.Type         -> bug "Use of typename as exit target"
-
     emitStatement :: Statement -> Translate ()
-    emitStatement statement = do
-        modifyM (field @"innermostBlock" . field @"statements") (++ [statement])
+    emitStatement statement = ifNotDeadCode $ do
+        modifyM (blockField @"statements") (++ [statement])
         return ()
 
     emitLet :: Maybe Type.TypedName -> Expression -> Translate Name
-    emitLet providedName expr = do
+    emitLet providedName expr = ifDeadCodeThenElse (Name (ID -1) Type.Unit "deadcode") $ do
         name <- case providedName of
             Just astName -> do
-                translatedName <- translateName astName
+                let translatedName = translateName astName
                 assertEqM (nameType translatedName) (typeOf expr)
                 return translatedName
             Nothing -> do
@@ -345,22 +348,36 @@ instance TranslateM Translate where
         return name
 
     emitBlock :: Text -> BlockType -> Translate Transfer -> Translate BlockName
-    emitBlock description argTypes translateBody = do
+    emitBlock description argTypes translateBody = ifDeadCodeThenElse (Name (ID -1) (BlockType []) "deadcode") $ do
         blockID <- newID BlockID
         args    <- newArgumentIDs argTypes
         modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing (Just previouslyInnermost))
-        blockName <- currentBlock
+        emittedBlockName <- currentBlock
         transferAtEnd <- translateBody
-        emitTransfer transferAtEnd -- this will handle popping and emitting the finished block
-        return blockName
+        emitTransfer transferAtEnd
+        whileM $ do
+            finishedBlock    <- liftM assert getFinishedBlock
+            currentBlockName <- currentBlock -- possibly a continuation of `emittedBlockName`
+            modifyM (field @"innermostBlock") (assert . enclosingBlock)
+            parentEmittedTransfer <- getM (blockField @"emittedTransfer")
+            case parentEmittedTransfer of
+                Just parentTransfer -> do
+                    modifyM (blockField @"statements") $ map $ \case
+                        BlockDecl name _ | name == currentBlockName ->
+                            BlockDecl currentBlockName finishedBlock
+                        otherStatement ->
+                            otherStatement
+                    return True
+                _ -> do
+                    emitStatement (BlockDecl currentBlockName finishedBlock)
+                    return False
+        return emittedBlockName
 
     withContinuation :: Either Type.TypedName (Text, BlockType) -> (BlockName -> Translate Transfer) -> Translate ()
-    withContinuation blockSpec inBetweenCode = do
-        alreadyEmitted <- getM (field @"innermostBlock" . field @"emittedTransfer")
-        assertEqM alreadyEmitted Nothing
+    withContinuation blockSpec inBetweenCode = ifNotDeadCode $ do
         nextBlockName <- case blockSpec of
             Left nextBlockAstName -> do
-                translateBlockName nextBlockAstName
+                return (translateBlockName nextBlockAstName)
             Right (nextBlockDescription, nextBlockParams) -> do
                 nextBlockID <- newID BlockID
                 return (Name nextBlockID nextBlockParams nextBlockDescription)
@@ -368,44 +385,25 @@ instance TranslateM Translate where
         let nextBlockStub = Block { arguments = nextBlockArgs, body = [], transfer = Jump (Target (Name (ID -1) (BlockType []) "") []) }
         emitStatement (BlockDecl nextBlockName nextBlockStub)
         transfer <- inBetweenCode nextBlockName -- TODO if any `emitTransfer` is done in here, it's a `bug`!
-        setM (field @"innermostBlock" . field @"emittedTransfer") (Just transfer)
+        setM (blockField @"emittedTransfer") (Just transfer)
         modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState (nameID nextBlockName) (description nextBlockName) nextBlockArgs [] Nothing (Just previouslyInnermost))
         return ()
 
-    -- does this black have an emitted continuation?
-    --   yes -> push a new block with this block as the parent block, with the name/args of the emitted continuation
-    --   no  -> is this block the continuation of the enclosing block?
-    --      yes -> pop this block, then replace the continuation stub in the parent block with this block
-    --               then recurse from "is this block the continuation...?" for the parent block
-    --      no  -> pop this block, append this block as a blockdecl statement to the parent block
+    -- this means early-escapes in the source
     emitTransfer :: Transfer -> Translate ()
-    emitTransfer transfer = do
-        BlockState { blockArguments, statements, emittedTransfer } <- getM (field @"innermostBlock")
-        assertEqM emittedTransfer Nothing
-        blockName <- currentBlock
-        let finishedBlock = Block blockArguments statements transfer
-        modifyM (field @"innermostBlock") (assert . enclosingBlock)
-        parentEmittedTransfer <- getM (field @"innermostBlock" . field @"emittedTransfer")
-        case parentEmittedTransfer of
-            Just parentTransfer -> do
-                modifyM (field @"innermostBlock" . field @"statements") $ map $ \case
-                    BlockDecl name _ | name == blockName -> BlockDecl blockName finishedBlock
-                    otherStatement                       -> otherStatement
-                setM (field @"innermostBlock" . field @"emittedTransfer") Nothing
-                emitTransfer parentTransfer
-            _ -> do
-                emitStatement (BlockDecl blockName finishedBlock)
+    emitTransfer transfer = ifNotDeadCode $ do
+        setM (blockField @"emittedTransfer") (Just transfer)
 
     currentBlock :: Translate BlockName
     currentBlock = do
-        blockID     <- getM (field @"innermostBlock" . field @"blockID")
-        description <- getM (field @"innermostBlock" . field @"blockDescription")
+        blockID     <- getM (blockField @"blockID")
+        description <- getM (blockField @"blockDescription")
         arguments   <- currentArguments
         return (Name blockID (BlockType (map nameType arguments)) description)
 
     currentArguments :: Translate [Name]
     currentArguments = do
-        getM (field @"innermostBlock" . field @"blockArguments")
+        getM (blockField @"blockArguments")
 
 
 {- EXAMPLE INPUT
