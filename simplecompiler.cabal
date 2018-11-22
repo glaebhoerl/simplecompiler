@@ -20,7 +20,10 @@ executable simplecompiler
 
 -- Here we define the language dialect we will be using:
   default-language:    Haskell2010
-  default-extensions:  ApplicativeDo,
+  default-extensions:
+                       -- sounds scary, but just means you can define functions which you need `TypeApplications` to use
+                       AllowAmbiguousTypes,
+                       ApplicativeDo,
                        AutoDeriveTypeable,
                        BangPatterns,
                        BinaryLiterals,
