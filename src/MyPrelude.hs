@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-} -- necessary to be able to make an alias for `Data.Generics.Sum.Constructors._Ctor`, apparently? :/
-
 module MyPrelude (module MyPrelude, module Reexports) where
 
 
@@ -32,7 +30,7 @@ import Data.Text.Prettyprint.Doc        as Reexports        (Doc)
 import Data.Set                         as Reexports        (Set)
 import Data.Map.Strict                  as Reexports        (Map)
 import GHC.Generics                     as Reexports        (Generic)
-import Data.Generics.Product.Fields     as Reexports        (field)
+import Data.Generics.Product.Fields     as Reexports        (HasField')
 import Data.Generics.Sum.Constructors   as Reexports        (AsConstructor')
 
 
@@ -46,6 +44,7 @@ import qualified Data.Text.Encoding             as Text
 import qualified Data.Text.Lazy                 as LazyText
 import qualified Control.Monad.Reader           as Reader      (runReaderT, runReader)
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put)
+import qualified Data.Generics.Product.Fields   as GenericLens (field')
 import qualified Data.Generics.Sum.Constructors as GenericLens (_Ctor')
 import Control.Applicative   (some, many, Const (Const, getConst))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
@@ -129,14 +128,8 @@ whenM condition action = do
     result <- condition
     when result action
 
-repeatM :: Monad m => m Bool -> m ()
-repeatM condition = whenM condition (repeatM condition)
-
-whileM :: Monad m => m Bool -> m a -> m ()
-whileM condition action = do
-    whenM condition $ do
-        unused action
-        whileM condition action
+whileM :: Monad m => m Bool -> m ()
+whileM condition = whenM condition (whileM condition)
 
 whileJustM :: Monad m => a -> (a -> m (Maybe a)) -> m ()
 whileJustM a action = do
@@ -228,7 +221,9 @@ constructFrom prism inner = fst (unPrism prism) inner
 modifyWhen :: Prism outer inner -> (inner -> inner) -> (outer -> outer)
 modifyWhen prism f outer = maybe outer (constructFrom prism . f) (getWhen prism outer)
 
--- (the counterpart, `field`, is just re-exported as-is)
+field :: forall name inner outer. HasField' name outer inner => Lens outer inner
+field = GenericLens.field' @name
+
 constructor :: forall name inner outer. AsConstructor' name outer inner => Prism outer inner
 constructor = GenericLens._Ctor' @name
 
@@ -464,6 +459,14 @@ debug a = withFrozenCallStack $
 debugM :: (HasCallStack, Monad m, Show a) => a -> m ()
 debugM a = withFrozenCallStack $
     traceM (showText a)
+
+prettyDebug :: (HasCallStack, Show a) => a -> a
+prettyDebug a = withFrozenCallStack $
+    trace (prettyShow a) a
+
+prettyDebugM :: (HasCallStack, Monad m, Show a) => a -> m ()
+prettyDebugM a = withFrozenCallStack $
+    traceM (prettyShow a)
 
 trace :: HasCallStack => Text -> a -> a
 trace text a = Debug.Trace.trace message a where
