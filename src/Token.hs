@@ -1,16 +1,13 @@
-module Token (Token (..), Keyword (..), Bracket (..), BracketKind (..), BracketDirection (..), Error (..), tokenize,
-              With (..)) where
+module Token (Token (..), Keyword (..), Bracket (..), BracketKind (..), BracketDirection (..), Error (..), tokenize) where
 
 import MyPrelude
 
-import Data.Char            (isAlpha, isAlphaNum, isDigit)
-import Data.Functor.Compose (Compose (Compose, getCompose))
+import Data.Char (isAlpha, isAlphaNum)
 
-import qualified Data.Text   as Text
-import qualified Text.Earley as E
-
-import qualified Data.Loc.Span as Span
-import Data.Loc (Span, spanFromTo, Loc, loc, locLine, locColumn)
+import qualified Text.Regex.Applicative        as RE
+import qualified Text.Regex.Applicative.Common as RE (signed, decimal)
+import qualified Language.Lexer.Applicative    as Lex
+import qualified Data.Loc                      as Loc
 
 import qualified Pretty as P
 
@@ -21,7 +18,7 @@ instance TextRepresentation Text where
     toText = id
 
 instance TextRepresentation Integer where
-    toText = Text.pack . show
+    toText = showText
 
 instance TextRepresentation ArithmeticOperator where
     toText = \case
@@ -72,7 +69,7 @@ data Keyword
 instance Enumerable Keyword
 
 instance TextRepresentation Keyword where
-    toText = Text.pack . drop 2 . show
+    toText = stringToText . drop 2 . show
 
 data BracketKind
     = Round
@@ -155,40 +152,7 @@ instance P.Render Token where
 instance P.Render [Token] where
     render = P.hsep . map P.render
 
-data SpanMonoid
-    = Span !Span
-    | EmptySpan
-    deriving (Generic, Show)
-
-instance Semigroup SpanMonoid where
-    Span s1   <> Span s2   = Span (Span.join s1 s2)
-    Span s1   <> EmptySpan = Span s1
-    EmptySpan <> Span s2   = Span s2
-    EmptySpan <> EmptySpan = EmptySpan
-
-instance Monoid SpanMonoid where
-    mempty = EmptySpan
-
-newtype With info a = With {
-    unWith :: (info, a)
-} deriving (Functor, Applicative, Show)
-
-mapInfo :: (info1 -> info2) -> With info1 a -> With info2 a
-mapInfo f (With (info, a)) = With (f info, a)
-
-instance Eq a => Eq (With info a) where
-    (==) = (==) `on` (snd . unWith)
-
-type Expected = Text
-
-type Prod r = Compose (E.Prod r Expected (With SpanMonoid Char)) (With SpanMonoid)
-
-token :: Char -> Prod r Char
-token = Compose . E.token . pure
-
-satisfy :: (Char -> Bool) -> Prod r Char
-satisfy = Compose . E.satisfy . (\f -> f . snd . unWith)
-
+{-
 matchRepresentable :: TextRepresentation a => a -> Prod r a
 matchRepresentable a = do
     _ <- (Compose . fmap pure . unused . E.list . map pure . textToString . toText) a
@@ -257,24 +221,16 @@ tokens = mdo
     fixedRec      <- E.rule (oneOf [fixed,      liftA2 (++) fixed      spacesRec,     liftA2 (++) fixed      stringlikeRec, liftA2 (++) fixed fixedRec])
     toks          <- E.rule (oneOf [spacesRec, stringlikeRec, fixedRec])
     return toks
+-}
 
-data Error
-    = Invalid
-    | Ambiguous ![[Token]]
-    deriving (Generic, Show)
+data Error = InvalidToken !Loc.Pos deriving (Generic, Show)
 
-tokenize :: Text -> Either Error [With SpanMonoid Token]
-tokenize = checkResult . tryParse . addSpans where
+tokenize :: Text -> Either Error [Token]
+tokenize = todo {-checkResult . tryParse . addSpans where
     addSpans    = map (mapInfo locToSpan) . zipWithLoc . textToString
     locToSpan l = Span (spanFromTo l (loc (locLine l) (locColumn l + 1)))
     tryParse    = fst . E.fullParses (E.parser tokens)
     checkResult = \case
         []    -> Left  Invalid
         [one] -> Right one
-        more  -> Left  (Ambiguous (map (map (snd . unWith)) more))
-
-zipWithLoc :: [Char] -> [With Loc Char]
-zipWithLoc chars = map With (zip (scanl' stepLoc (loc 1 1) chars) chars) where
-    stepLoc oldLoc = \case
-        '\n' -> loc (locLine oldLoc + 1) 1
-        _    -> loc (locLine oldLoc)     (locColumn oldLoc + 1)
+        more  -> Left  (Ambiguous (map (map (snd . unWith)) more))-}

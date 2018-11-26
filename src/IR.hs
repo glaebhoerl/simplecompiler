@@ -228,7 +228,7 @@ translateStatement = \case
                 return (Branch value [Target joinPoint [Literal Unit], Target blockBody []])
             return (Jump (Target whileBlock []))
     AST.Return target maybeExpr -> do
-        maybeValue       <- mapM translateTemporary maybeExpr
+        maybeValue <- mapM translateTemporary maybeExpr
         emitTransfer (Jump (Target (translateBlockName target) [fromMaybe (Literal Unit) maybeValue]))
     AST.Break target -> do
         emitTransfer (Jump (Target (translateBlockName target) [Literal Unit]))

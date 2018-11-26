@@ -89,9 +89,9 @@ executable simplecompiler
                        directory,
                        Earley,
                        generic-lens,
+                       lexer-applicative,
                        llvm-hs,
                        llvm-hs-pure,
-                       loc,
                        managed,
                        mtl,
                        pretty-simple,
@@ -99,10 +99,11 @@ executable simplecompiler
                        prettyprinter-ansi-terminal,
                        process,
                        profunctors,
+                       regex-applicative,
+                       srcloc,
                        text
   ghc-options:         -O -W -Wall -Wcompat -Wincomplete-uni-patterns -Wincomplete-record-updates -Wredundant-constraints
 
 source-repository head
   type:     git
   location: https://github.com/glaebhoerl/simplecompiler
-
