@@ -81,13 +81,13 @@ class Monad m => LLVM m where
     freshName    :: m L.Name
 
 data CallsBlockWith = CallsBlockWith {
-    calledBlock     :: !L.Name,
-    argumentsPassed :: ![Operand]
+    calledBlock     :: L.Name,
+    argumentsPassed :: [Operand]
 } deriving (Generic, Eq, Show)
 
 data CalledByBlockWith = CalledByBlockWith {
-    callingBlock      :: !L.Name,
-    argumentsReceived :: ![Operand]
+    callingBlock      :: L.Name,
+    argumentsReceived :: [Operand]
 } deriving (Generic, Eq, Show)
 
 translatedType :: IR.Type -> L.Type
@@ -377,8 +377,8 @@ newtype FirstPass a = FirstPass {
 } deriving (Functor, Applicative, Monad, MonadState FirstState)
 
 data FirstState = FirstState {
-    freshNamer :: !Word,
-    callersMap :: !(Map L.Name [CalledByBlockWith])
+    freshNamer :: Word,
+    callersMap :: Map L.Name [CalledByBlockWith]
 } deriving Generic
 
 instance LLVM FirstPass where
@@ -403,18 +403,18 @@ newtype SecondPass a = SecondPass {
 } deriving (Functor, Applicative, Monad, MonadState SecondState)
 
 data SecondState = SecondState {
-    secondNamer      :: !Word,
-    callersOfBlocks  :: !(Map L.Name [CalledByBlockWith]), -- readonly
-    allocas          :: ![Named Instruction],
-    globals          :: ![Global],
-    finishedBlocks   :: ![BasicBlock],
-    unfinishedBlocks :: !UnfinishedBlock
+    secondNamer      :: Word,
+    callersOfBlocks  :: Map L.Name [CalledByBlockWith], -- readonly
+    allocas          :: [Named Instruction],
+    globals          :: [Global],
+    finishedBlocks   :: [BasicBlock],
+    unfinishedBlocks :: UnfinishedBlock
 } deriving Generic
 
 data UnfinishedBlock = UnfinishedBlock {
-    blockName     :: !L.Name,
-    instructions  :: ![Named Instruction],
-    previousBlock :: !(Maybe UnfinishedBlock)
+    blockName     :: L.Name,
+    instructions  :: [Named Instruction],
+    previousBlock :: Maybe UnfinishedBlock
 } deriving (Generic, Eq)
 
 instance LLVM SecondPass where

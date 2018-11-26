@@ -87,8 +87,8 @@ data BracketDirection
 instance Enumerable BracketDirection
 
 data Bracket = Bracket {
-    bracketKind      :: !BracketKind,
-    bracketDirection :: !BracketDirection
+    bracketKind      :: BracketKind,
+    bracketDirection :: BracketDirection
 } deriving (Generic, Eq, Show)
 
 instance Enumerable Bracket where
@@ -104,13 +104,13 @@ instance TextRepresentation Bracket where
         Bracket Square Close -> "]"
 
 data Token
-    = Keyword        !Keyword
-    | Name           !Text
-    | BinaryOperator !BinaryOperator
-    | UnaryOperator  !UnaryOperator
-    | Bracket'       !Bracket
-    | Number         !Integer
-    | Text           !Text
+    = Keyword        Keyword
+    | Name           Text
+    | BinaryOperator BinaryOperator
+    | UnaryOperator  UnaryOperator
+    | Bracket'       Bracket
+    | Number         Integer
+    | Text           Text
     | EqualsSign
     | Comma
     | Colon
@@ -223,7 +223,7 @@ tokens = mdo
     return toks
 -}
 
-data Error = InvalidToken !Loc.Pos deriving (Generic, Show)
+data Error = InvalidToken Loc.Pos deriving (Generic, Show)
 
 tokenize :: Text -> Either Error [Token]
 tokenize = todo {-checkResult . tryParse . addSpans where

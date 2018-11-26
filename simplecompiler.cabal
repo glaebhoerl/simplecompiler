@@ -20,9 +20,8 @@ executable simplecompiler
 
 -- Here we define the language dialect we will be using:
   default-language:    Haskell2010
-  default-extensions:
-                       -- sounds scary, but just means you can define functions which you need `TypeApplications` to use
-                       AllowAmbiguousTypes,
+  default-extensions:  AllowAmbiguousTypes,
+--                     ^^^^^^^^^^^^^^^^^^^ sounds scary, but just means you can define functions which you need `TypeApplications` to use
                        ApplicativeDo,
                        AutoDeriveTypeable,
                        BangPatterns,
@@ -44,12 +43,13 @@ executable simplecompiler
                        InstanceSigs,
                        KindSignatures,
                        LambdaCase,
-                       --^^^ <3
+--                     ^^^^^^^^^^ <3
                        MultiParamTypeClasses,
                        NamedFieldPuns,
                        NegativeLiterals,
                        NoImplicitPrelude,
-                       --^^^ `import MyPrelude` instead!
+--                     ^^^^^^^^^^^^^^^^^ `import MyPrelude` instead!
+                       NumericUnderscores,
                        OverloadedStrings,
                        PartialTypeSignatures,
                        PatternSynonyms,
@@ -58,6 +58,8 @@ executable simplecompiler
                        RecursiveDo,
                        ScopedTypeVariables,
                        StandaloneDeriving,
+                       StrictData,
+--                     ^^^^^^^^^^ NOTE!!
                        TupleSections,
                        TypeApplications,
                        TypeFamilies,

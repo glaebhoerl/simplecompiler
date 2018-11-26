@@ -86,9 +86,9 @@ data Info
     | Colon
     | Semicolon
     | UserOperator
-    | Literal    !Type
-    | Sigil      !IdentInfo
-    | Identifier !IdentInfo
+    | Literal    Type
+    | Sigil      IdentInfo
+    | Identifier IdentInfo
     deriving (Generic, Eq, Show)
 
 data Type
@@ -108,18 +108,18 @@ data DefinitionOrUse
     deriving (Generic, Eq, Show)
 
 data IdentInfo = IdentInfo {
-    identName :: !Text,
-    defOrUse  :: !DefinitionOrUse,
-    identType :: !Type,
-    isBuiltin :: !Bool
+    identName :: Text,
+    defOrUse  :: DefinitionOrUse,
+    identType :: Type,
+    isBuiltin :: Bool
 } deriving (Generic, Eq, Show)
 
 data Style = Style {
-    color        :: !(Maybe Color),
-    isDull       :: !Bool,
-    isBold       :: !Bool,
-    isItalic     :: !Bool,
-    isUnderlined :: !Bool
+    color        :: Maybe Color,
+    isDull       :: Bool,
+    isBold       :: Bool,
+    isItalic     :: Bool,
+    isUnderlined :: Bool
 } deriving (Generic, Eq, Show)
 
 data Color

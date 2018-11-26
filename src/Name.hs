@@ -27,24 +27,24 @@ instance Enumerable BuiltinName
 
 -- subscopes within each scope are numbered positionally, starting with 0
 data Path = Path {
-    function :: !Text,
-    scope    :: ![Int]
+    function :: Text,
+    scope    :: [Int]
 } deriving (Generic, Eq, Ord, Show)
 
 data LocalName = LocalName {
-    path      :: !Path,
-    givenName :: !Text
+    path      :: Path,
+    givenName :: Text
 } deriving (Generic, Eq, Ord, Show)
 
 data Name
-    = BuiltinName  !BuiltinName
-    | FunctionName !Text
-    | Name         !LocalName
+    = BuiltinName  BuiltinName
+    | FunctionName Text
+    | Name         LocalName
     deriving (Generic, Eq, Ord, Show)
 
 data NameWith info = NameWith {
-    name :: !Name,
-    info :: !info
+    name :: Name,
+    info :: info
 } deriving (Generic, Show, Functor)
 
 instance Eq (NameWith info) where
@@ -159,8 +159,8 @@ instance ResolveNamesIn AST.Expression where
 ------------------------------------------------------------------------ resolution backend
 
 data Error
-    = NameNotFound !Text !Path
-    | NameConflict !Text !Path
+    = NameNotFound Text Path
+    | NameConflict Text Path
     deriving (Generic, Show)
 
 newtype NameResolve a = NameResolve {
@@ -185,9 +185,9 @@ resolveFunction function@AST.Function { AST.functionName } = do
 type LocalContext = [(Int, Map Text AST.BindingType)]  -- TODO maybe use Natural and NonEmpty here
 
 data Context = Context {
-    functions       :: !(Set Text),
-    currentFunction :: !Text,
-    locals          :: !LocalContext
+    functions       :: Set Text,
+    currentFunction :: Text,
+    locals          :: LocalContext
 } deriving (Generic, Show)
 
 lookupLocal :: Text -> LocalContext -> Maybe ([Int], AST.BindingType)
@@ -240,9 +240,9 @@ instance NameResolveM NameResolve where
 ------------------------------------------------------------------------ validation
 
 data ValidationError info
-    = NotInScope   !Name
-    | Redefined    !Name
-    | InfoMismatch !(NameWith info) !(NameWith info)
+    = NotInScope   Name
+    | Redefined    Name
+    | InfoMismatch (NameWith info) (NameWith info)
     deriving (Generic, Show)
 
 -- This checks that:

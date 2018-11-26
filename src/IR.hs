@@ -24,14 +24,14 @@ newtype BlockType = BlockType {
 } deriving (Generic, Eq, Show)
 
 data ID
-    = ID      !Int
-    | ASTName !Name.Name -- this includes all functions, as well as `return` and `break` points!
+    = ID      Int
+    | ASTName Name.Name -- this includes all functions, as well as `return` and `break` points
     deriving (Generic, Eq, Ord, Show)
 
 data NameWithType nameType = Name {
-    nameID      :: !ID,
-    nameType    :: !nameType,
-    description :: !Text
+    nameID      :: ID,
+    nameType    :: nameType,
+    description :: Text
 } deriving (Generic, Show, Functor)
 
 type Name      = NameWithType Type
@@ -44,49 +44,49 @@ instance Ord (NameWithType nameType) where
     compare = compare `on` nameID
 
 data Literal
-    = Number !Int64
-    | String !Text
+    = Number Int64
+    | String Text
     | Unit
     deriving (Generic, Eq, Show)
 
 data Value
-    = Literal !Literal
-    | Named   !Name
+    = Literal Literal
+    | Named   Name
     deriving (Generic, Eq, Show)
 
 data Expression
-    = Value          !Value
-    | UnaryOperator  !UnaryOperator !Value
-    | BinaryOperator !Value !BinaryOperator !Value
-    | Call           !Value ![Value]
+    = Value          Value
+    | UnaryOperator  UnaryOperator Value
+    | BinaryOperator Value BinaryOperator Value
+    | Call           Value [Value]
     deriving (Generic, Eq, Show)
 
 data Statement
-    = BlockDecl !BlockName !Block
-    | Let       !Name      !Expression -- also used for "expression statements" -- the name is simply ignored
-    | Assign    !Name      !Value
+    = BlockDecl BlockName Block
+    | Let       Name      Expression -- also used for "expression statements" -- the name is simply ignored
+    | Assign    Name      Value
     deriving (Generic, Eq, Show)
 
 data Block = Block {
-    arguments :: ![Name],
-    body      :: ![Statement],
-    transfer  :: !Transfer
+    arguments :: [Name],
+    body      :: [Statement],
+    transfer  :: Transfer
 } deriving (Generic, Eq, Show)
 
 data Transfer
-    = Jump   !Target
-    | Branch !Value ![Target] -- targets are in "ascending order": false, then true
+    = Jump   Target
+    | Branch Value [Target] -- targets are in "ascending order": false, then true
     deriving (Generic, Eq, Show)
 
 data Target = Target {
-    targetBlock :: !BlockName,
-    targetArgs  :: ![Value]
+    targetBlock :: BlockName,
+    targetArgs  :: [Value]
 } deriving (Generic, Eq, Show)
 
 data Function = Function {
-    functionID   :: !ID,
-    functionBody :: !Block,
-    returnBlock  :: !BlockName
+    functionID   :: ID,
+    functionBody :: Block,
+    returnBlock  :: BlockName
 } deriving (Generic, Eq, Show)
 
 functionName :: Function -> Name
@@ -279,17 +279,17 @@ newtype Translate a = Translate {
 } deriving (Functor, Applicative, Monad, MonadState TranslateState)
 
 data TranslateState = TranslateState {
-    lastID         :: !Int,
-    innermostBlock :: !BlockState
+    lastID         :: Int,
+    innermostBlock :: BlockState
 } deriving (Generic, Eq, Show)
 
 data BlockState = BlockState {
-    blockID          :: !ID,
-    blockDescription :: !Text,
-    blockArguments   :: ![Name],
-    statements       :: ![Statement],
-    emittedTransfer  :: !(Maybe Transfer), -- this is `Just` if we have early-returned and are in dead code, or if we are currently processing the continuation of the block
-    enclosingBlock   :: !(Maybe BlockState)
+    blockID          :: ID,
+    blockDescription :: Text,
+    blockArguments   :: [Name],
+    statements       :: [Statement],
+    emittedTransfer  :: Maybe Transfer, -- this is `Just` if we have early-returned and are in dead code, or if we are currently processing the continuation of the block
+    enclosingBlock   :: Maybe BlockState
 } deriving (Generic, Eq, Show)
 
 -- (wonder if there's any nicer solution?)
@@ -447,18 +447,18 @@ block main() {
 
 -- TODO think through what other new error possibilities there might be!
 data ValidationError
-    = NotInScope         !ID
-    | Redefined          !ID
-    | ExpectedValue      !BlockName
-    | ExpectedBlock      !Name
-    | Inconsistent       !Name      !Name
-    | BlockInconsistent  !BlockName !BlockName
-    | TypeMismatch       !Type      !Expression
-    | BlockTypeMismatch  !BlockType !Block
-    | BadTargetCount     !Transfer
-    | BadTargetArgsCount !Target
-    | BadCallArgsCount   !Expression
-    | CallOfNonFunction  !Expression
+    = NotInScope         ID
+    | Redefined          ID
+    | ExpectedValue      BlockName
+    | ExpectedBlock      Name
+    | Inconsistent       Name      Name
+    | BlockInconsistent  BlockName BlockName
+    | TypeMismatch       Type      Expression
+    | BlockTypeMismatch  BlockType Block
+    | BadTargetCount     Transfer
+    | BadTargetArgsCount Target
+    | BadCallArgsCount   Expression
+    | CallOfNonFunction  Expression
     deriving (Generic, Show)
 
 validate :: [Function] -> Either ValidationError ()

@@ -17,7 +17,7 @@ import Name (Name, NameWith (NameWith), ResolvedName)
 
 data LargeType
     = Type
-    | SmallType !Type
+    | SmallType Type
     deriving (Generic, Eq, Show)
 
 data Type
@@ -25,7 +25,7 @@ data Type
     | Bool
     | Text
     | Unit
-    | Function ![Type] !Type
+    | Function [Type] Type
     deriving (Generic, Eq, Show)
 
 type TypedName = NameWith LargeType
@@ -217,8 +217,8 @@ checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.b
         reportError FunctionWithoutReturn
 
 data ControlFlow = ControlFlow {
-    definitelyReturns :: !Bool, -- guaranteed divergence also counts as "returning"
-    potentiallyBreaks :: !Bool
+    definitelyReturns :: Bool, -- guaranteed divergence also counts as "returning"
+    potentiallyBreaks :: Bool
 }
 
 instance Semigroup ControlFlow where
@@ -315,9 +315,9 @@ builtinAsType = \case
 
 -- TODO check presence/absence of exit targets (or in Name.validate??)
 data ValidationError
-    = ExpectedType !LargeType !(AST.Expression TypedName)
-    | ExpectedFunction !(AST.Expression TypedName)
-    | ExpectedArgumentCount !Int ![AST.Expression TypedName]
+    = ExpectedType LargeType (AST.Expression TypedName)
+    | ExpectedFunction (AST.Expression TypedName)
+    | ExpectedArgumentCount Int [AST.Expression TypedName]
     deriving (Generic, Show)
 
 -- This checks that:

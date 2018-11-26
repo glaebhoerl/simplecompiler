@@ -541,9 +541,9 @@ data LogicalOperator
 instance Enumerable LogicalOperator
 
 data BinaryOperator
-    = ArithmeticOperator !ArithmeticOperator
-    | ComparisonOperator !ComparisonOperator
-    | LogicalOperator    !LogicalOperator
+    = ArithmeticOperator ArithmeticOperator
+    | ComparisonOperator ComparisonOperator
+    | LogicalOperator    LogicalOperator
     deriving (Generic, Eq, Show)
 
 instance Enumerable BinaryOperator where

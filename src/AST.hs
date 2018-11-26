@@ -12,12 +12,12 @@ import qualified Token  as T
 ----------------------------------------------------------------------------- types
 
 data Expression name
-    = Named          !name
-    | Call           !name              ![Expression name]
-    | NumberLiteral  !Integer
-    | TextLiteral    !Text
-    | UnaryOperator  !UnaryOperator     !(Expression name)
-    | BinaryOperator !(Expression name) !BinaryOperator !(Expression name)
+    = Named          name
+    | Call           name              [Expression name]
+    | NumberLiteral  Integer
+    | TextLiteral    Text
+    | UnaryOperator  UnaryOperator     (Expression name)
+    | BinaryOperator (Expression name) BinaryOperator (Expression name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data BindingType
@@ -26,32 +26,32 @@ data BindingType
     deriving (Generic, Eq, Show)
 
 data Statement name
-    = Binding    !BindingType       !name              !(Expression name)
-    | Assign     !name              !(Expression name)
-    | IfThen     !(Expression name) !(Block name)
-    | IfThenElse !(Expression name) !(Block name)      !(Block name)
-    | Forever    !(Block name)
-    | While      !(Expression name) !(Block name)
-    | Return     !name              !(Maybe (Expression name))
-    | Break      !name -- return and break refer to the `exitTarget` in `Block`; these are "phantom names", not present in the source code
-    | Expression !(Expression name)
+    = Binding    BindingType       name              (Expression name)
+    | Assign     name              (Expression name)
+    | IfThen     (Expression name) (Block name)
+    | IfThenElse (Expression name) (Block name)      (Block name)
+    | Forever    (Block name)
+    | While      (Expression name) (Block name)
+    | Return     name              (Maybe (Expression name))
+    | Break      name -- return and break refer to the `exitTarget` in `Block`; these are "phantom names", not present in the source code
+    | Expression (Expression name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Block name = Block {
-    exitTarget :: !(Maybe name), -- "phantom", see above
-    statements :: ![Statement name]
+    exitTarget :: Maybe name, -- "phantom", see above
+    statements :: [Statement name]
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Argument name = Argument {
-    argumentName :: !name,
-    argumentType :: !name
+    argumentName :: name,
+    argumentType :: name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Function name = Function {
-    functionName :: !name,
-    arguments    :: ![Argument name],
-    returns      :: !(Maybe name),
-    body         :: !(Block name)
+    functionName :: name,
+    arguments    :: [Argument name],
+    returns      :: Maybe name,
+    body         :: Block name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 
@@ -103,8 +103,8 @@ precedenceGroups = assert (justIf isWellFormed listOfGroups) where
          map LogicalOperator    [Or]]
 
 data BinaryOperationList
-    = SingleExpression !(Expression Text)
-    | BinaryOperation  !(Expression Text) !BinaryOperator !BinaryOperationList
+    = SingleExpression (Expression Text)
+    | BinaryOperation  (Expression Text) BinaryOperator BinaryOperationList
     deriving Show
 
 resolvePrecedences :: BinaryOperationList -> Expression Text
@@ -213,8 +213,8 @@ functionGrammar = do
 type AST name = [Function name]
 
 data Error
-    = Invalid   !Int ![Expected] ![T.Token]
-    | Ambiguous ![AST Text]
+    = Invalid   Int [Expected] [T.Token]
+    | Ambiguous [AST Text]
     deriving (Generic, Show)
 
 parse :: [T.Token] -> Either Error (AST Text)
