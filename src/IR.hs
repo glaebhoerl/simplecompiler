@@ -318,64 +318,67 @@ newArgumentIDs (BlockType argTypes) = do
         argID <- newID LetID
         return (Name argID argType "")
 
--- TODO a use case for `ifM`/`elseM`?
-ifDeadCodeThenElse :: a -> Translate a -> Translate a
-ifDeadCodeThenElse thenDefault elseAction = do
+deadCode :: Translate Bool
+deadCode = do
     emittedTransfer <- getM (blockField @"emittedTransfer")
-    case emittedTransfer of
-        Just _  -> return thenDefault
-        Nothing -> elseAction
+    return (isJust emittedTransfer)
 
-ifNotDeadCode :: Translate () -> Translate ()
-ifNotDeadCode = ifDeadCodeThenElse ()
+notDeadCode :: Translate Bool
+notDeadCode = liftM not deadCode
 
 instance TranslateM Translate where
     emitStatement :: Statement -> Translate ()
-    emitStatement statement = ifNotDeadCode do
+    emitStatement statement = whenM notDeadCode do
         modifyM (blockField @"statements") (++ [statement])
         return ()
 
     emitLet :: Maybe Type.TypedName -> Expression -> Translate Name
-    emitLet providedName expr = ifDeadCodeThenElse (Name (ID -1) Type.Unit "deadcode") do
-        name <- case providedName of
-            Just astName -> do
-                let translatedName = translateName astName
-                assertEqM (nameType translatedName) (typeOf expr)
-                return translatedName
-            Nothing -> do
-                letID <- newID LetID
-                return (Name letID (typeOf expr) "")
-        emitStatement (Let name expr)
-        return name
+    emitLet providedName expr = do
+        ifM deadCode do
+            return (Name (ID -1) Type.Unit "deadcode")
+        `elseM` do
+            name <- case providedName of
+                Just astName -> do
+                    let translatedName = translateName astName
+                    assertEqM (nameType translatedName) (typeOf expr)
+                    return translatedName
+                Nothing -> do
+                    letID <- newID LetID
+                    return (Name letID (typeOf expr) "")
+            emitStatement (Let name expr)
+            return name
 
     emitBlock :: Text -> BlockType -> Translate Transfer -> Translate BlockName
-    emitBlock description argTypes translateBody = ifDeadCodeThenElse (Name (ID -1) (BlockType []) "deadcode") do
-        blockID <- newID BlockID
-        args    <- newArgumentIDs argTypes
-        modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing (Just previouslyInnermost))
-        emittedBlockName <- currentBlock
-        transferAtEnd <- translateBody
-        emitTransfer transferAtEnd
-        whileM do
-            finishedBlock    <- liftM assert getFinishedBlock
-            currentBlockName <- currentBlock -- possibly a continuation of `emittedBlockName`
-            modifyM (field @"innermostBlock") (assert . enclosingBlock)
-            parentEmittedTransfer <- getM (blockField @"emittedTransfer")
-            case parentEmittedTransfer of
-                Just parentTransfer -> do
-                    (modifyM (blockField @"statements") . map) \case
-                        BlockDecl name _ | name == currentBlockName ->
-                            BlockDecl currentBlockName finishedBlock
-                        otherStatement ->
-                            otherStatement
-                    return True
-                _ -> do
-                    emitStatement (BlockDecl currentBlockName finishedBlock)
-                    return False
-        return emittedBlockName
+    emitBlock description argTypes translateBody = do
+        ifM deadCode do
+            return (Name (ID -1) (BlockType []) "deadcode")
+        `elseM` do
+            blockID <- newID BlockID
+            args    <- newArgumentIDs argTypes
+            modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing (Just previouslyInnermost))
+            emittedBlockName <- currentBlock
+            transferAtEnd <- translateBody
+            emitTransfer transferAtEnd
+            whileM do
+                finishedBlock    <- liftM assert getFinishedBlock
+                currentBlockName <- currentBlock -- possibly a continuation of `emittedBlockName`
+                modifyM (field @"innermostBlock") (assert . enclosingBlock)
+                parentEmittedTransfer <- getM (blockField @"emittedTransfer")
+                case parentEmittedTransfer of
+                    Just parentTransfer -> do
+                        (modifyM (blockField @"statements") . map) \case
+                            BlockDecl name _ | name == currentBlockName ->
+                                BlockDecl currentBlockName finishedBlock
+                            otherStatement ->
+                                otherStatement
+                        return True
+                    _ -> do
+                        emitStatement (BlockDecl currentBlockName finishedBlock)
+                        return False
+            return emittedBlockName
 
     withContinuation :: Either Type.TypedName (Text, BlockType) -> (BlockName -> Translate Transfer) -> Translate ()
-    withContinuation blockSpec inBetweenCode = ifNotDeadCode do
+    withContinuation blockSpec inBetweenCode = whenM notDeadCode do
         nextBlockName <- case blockSpec of
             Left nextBlockAstName -> do
                 return (translateBlockName nextBlockAstName)
@@ -392,7 +395,7 @@ instance TranslateM Translate where
 
     -- this means early-escapes in the source
     emitTransfer :: Transfer -> Translate ()
-    emitTransfer transfer = ifNotDeadCode do
+    emitTransfer transfer = whenM notDeadCode do
         setM (blockField @"emittedTransfer") (Just transfer)
 
     currentBlock :: Translate BlockName
