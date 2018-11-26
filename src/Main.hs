@@ -67,7 +67,9 @@ getInput = do
 tokens :: Command [Token]
 tokens = do
     input <- getInput
-    try (mapLeft prettyShow (Token.tokenize input))
+    x <- try (mapLeft prettyShow (Token.tokenize input))
+    liftIO (prettyPrint x)
+    return (map (snd . Token.unWith) x)
 
 ast :: Command (AST Text)
 ast = do

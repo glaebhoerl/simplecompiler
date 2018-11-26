@@ -1,10 +1,16 @@
-module Token (Token (..), Keyword (..), Bracket (..), BracketKind (..), BracketDirection (..), Error (..), tokenize) where
+module Token (Token (..), Keyword (..), Bracket (..), BracketKind (..), BracketDirection (..), Error (..), tokenize,
+              With (..)) where
 
 import MyPrelude
 
-import Data.Char (isAlpha, isAlphaNum, isDigit)
+import Data.Char            (isAlpha, isAlphaNum, isDigit)
+import Data.Functor.Compose (Compose (Compose, getCompose))
+
 import qualified Data.Text   as Text
 import qualified Text.Earley as E
+
+import qualified Data.Loc.Span as Span
+import Data.Loc (Span, spanFromTo, Loc, loc, locLine, locColumn)
 
 import qualified Pretty as P
 
@@ -149,21 +155,50 @@ instance P.Render Token where
 instance P.Render [Token] where
     render = P.hsep . map P.render
 
+data SpanMonoid
+    = Span !Span
+    | EmptySpan
+    deriving (Generic, Show)
+
+instance Semigroup SpanMonoid where
+    Span s1   <> Span s2   = Span (Span.join s1 s2)
+    Span s1   <> EmptySpan = Span s1
+    EmptySpan <> Span s2   = Span s2
+    EmptySpan <> EmptySpan = EmptySpan
+
+instance Monoid SpanMonoid where
+    mempty = EmptySpan
+
+newtype With info a = With {
+    unWith :: (info, a)
+} deriving (Functor, Applicative, Show)
+
+mapInfo :: (info1 -> info2) -> With info1 a -> With info2 a
+mapInfo f (With (info, a)) = With (f info, a)
+
+instance Eq a => Eq (With info a) where
+    (==) = (==) `on` (snd . unWith)
+
 type Expected = Text
 
-type Prod    r output = E.Prod r Expected Char output
-type Grammar r output = E.Grammar r (Prod r output)
+type Prod r = Compose (E.Prod r Expected (With SpanMonoid Char)) (With SpanMonoid)
+
+token :: Char -> Prod r Char
+token = Compose . E.token . pure
+
+satisfy :: (Char -> Bool) -> Prod r Char
+satisfy = Compose . E.satisfy . (\f -> f . snd . unWith)
 
 matchRepresentable :: TextRepresentation a => a -> Prod r a
 matchRepresentable a = do
-    _ <- E.listLike (toText a)
+    _ <- (Compose . fmap pure . unused . E.list . map pure . textToString . toText) a
     return a
 
 matchEnumerable :: (Enumerable a, TextRepresentation a) => (a -> Token) -> Prod r Token
 matchEnumerable toToken = liftA1 toToken (oneOf (map matchRepresentable enumerate))
 
 whitespace :: Prod r Char
-whitespace = oneOf (map E.token [' ', '\n'])
+whitespace = oneOf (map token [' ', '\n'])
 
 whitespaced :: Prod r output -> Prod r output
 whitespaced inner = do
@@ -173,18 +208,16 @@ whitespaced inner = do
     return output
 
 literal :: Token -> Prod r Token
-literal tok = do
-    _ <- E.listLike (toText tok)
-    return tok
+literal = matchRepresentable
 
 orUnderscore :: (Char -> Bool) -> (Char -> Bool)
 orUnderscore f = \c -> f c || (c == '_')
 
 name :: Prod r Text
 name = do
-    first <- (E.satisfy (orUnderscore isAlpha))
-    rest  <- (zeroOrMore (E.satisfy (orUnderscore isAlphaNum)))
-    return (Text.pack (first : rest))
+    first <- satisfy (orUnderscore isAlpha)
+    rest  <- zeroOrMore (satisfy (orUnderscore isAlphaNum))
+    return (stringToText (first : rest))
 
 nameOrKeyword :: Text -> Token
 nameOrKeyword text' = case lookup text' (map (\keyword -> (toText keyword, keyword)) (enumerate @Keyword)) of
@@ -193,24 +226,24 @@ nameOrKeyword text' = case lookup text' (map (\keyword -> (toText keyword, keywo
 
 number :: Prod r Integer
 number = do
-    minusSign <- zeroOrOne (E.token '-')
-    digits    <- oneOrMore (E.satisfy isDigit)
+    minusSign <- zeroOrOne (token '-')
+    digits    <- oneOrMore (satisfy isDigit)
     return (read (minusSign ++ digits))
 
 text :: Prod r Text
 text = do
-    _       <- E.token '"'
-    content <- zeroOrMore (E.satisfy (\c -> notElem c ['"', '\n']))
-    _       <- E.token '"'
-    return (Text.pack content)
+    _       <- token '"'
+    content <- zeroOrMore (satisfy (\c -> notElem c ['"', '\n']))
+    _       <- token '"'
+    return (stringToText content)
 
 -- FIXME BUGS:
 -- unary negation is ambiguous with both negative literals and binary negation :(
-tokens :: Grammar r [Token]
+tokens :: E.Grammar r (E.Prod r Expected (With SpanMonoid Char) [With SpanMonoid Token])
 tokens = mdo
-    spaces     <- E.rule (liftA1 (const []) (oneOrMore (oneOf [E.token ' ', E.token '\n'])))
-    stringlike <- E.rule (liftA1 single (oneOf [liftA1 nameOrKeyword name, liftA1 Number number]))
-    fixed      <- E.rule (liftA1 single (oneOf
+    spaces     <- E.rule $ liftA1 (const []) (getCompose (oneOrMore whitespace))
+    stringlike <- E.rule $ liftA1 single     (getCompose (oneOf [liftA1 nameOrKeyword name, liftA1 Number number]))
+    fixed      <- E.rule $ liftA1 single     (getCompose (oneOf
         [whitespaced (matchEnumerable BinaryOperator),
         matchEnumerable UnaryOperator,
         matchEnumerable Bracket',
@@ -230,8 +263,18 @@ data Error
     | Ambiguous ![[Token]]
     deriving (Generic, Show)
 
-tokenize :: Text -> Either Error [Token]
-tokenize text' = case fst (E.fullParses (E.parser tokens) text') of
-    []    -> Left  Invalid
-    [one] -> Right one
-    more  -> Left  (Ambiguous more)
+tokenize :: Text -> Either Error [With SpanMonoid Token]
+tokenize = checkResult . tryParse . addSpans where
+    addSpans    = map (mapInfo locToSpan) . zipWithLoc . textToString
+    locToSpan l = Span (spanFromTo l (loc (locLine l) (locColumn l + 1)))
+    tryParse    = fst . E.fullParses (E.parser tokens)
+    checkResult = \case
+        []    -> Left  Invalid
+        [one] -> Right one
+        more  -> Left  (Ambiguous (map (map (snd . unWith)) more))
+
+zipWithLoc :: [Char] -> [With Loc Char]
+zipWithLoc chars = map With (zip (scanl' stepLoc (loc 1 1) chars) chars) where
+    stepLoc oldLoc = \case
+        '\n' -> loc (locLine oldLoc + 1) 1
+        _    -> loc (locLine oldLoc)     (locColumn oldLoc + 1)
