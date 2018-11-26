@@ -1,16 +1,15 @@
-flags: {}
+flags:             {}
 extra-package-dbs: []
-packages:
-- '.'
-extra-deps:
-- loc-0.1.3.4
-#resolver: nightly-2017-07-25
-resolver: lts-12.10
-#resolver: nightly-2018-10-01
+packages:    ['.']
+extra-deps:  [loc-0.1.3.4]
+#resolver:    nightly-2017-07-25
+#resolver:   lts-12.10
+resolver:    nightly-2018-11-24
+allow-newer: true # for intero
 
 nix:
-  enable: true
-  pure: true
-  packages: [llvm_6]
-#  packages: [llvm_7]
+  enable:       true
+  pure:         true
   add-gc-roots: true
+#  packages:    [llvm_7]
+  shell-file:   shell.nix # so we can get it from the unstable channel
