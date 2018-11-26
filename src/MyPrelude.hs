@@ -68,8 +68,8 @@ tail = \case
     []   -> Nothing
     _:as -> Just as
 
-(++) :: Monoid a => a -> a -> a
-(++) = mappend
+(++) :: Semigroup a => a -> a -> a
+(++) = (Prelude.<>)
 
 (!=) :: Eq a => a -> a -> Bool
 (!=) = (Prelude./=)
@@ -126,45 +126,6 @@ whichever = either id id
 mapLeft :: (a -> a') -> Either a b -> Either a' b
 mapLeft f = reflect . fmap f . reflect
 
-try :: MonadError e m => Either e a -> m a
-try = either throwError return
-
-doTry :: MonadError e m => m (Either e a) -> m a
-doTry action = do
-    result <- action
-    try result
-
-whenM :: Monad m => m Bool -> m () -> m ()
-whenM condition action = do
-    result <- condition
-    when result action
-
-whileM :: Monad m => m Bool -> m ()
-whileM condition = whenM condition (whileM condition)
-
-whileJustM :: Monad m => a -> (a -> m (Maybe a)) -> m ()
-whileJustM a action = whileRightM a (liftM asRight . action . whichever)
-
-whileRightM :: Monad m => a -> (Either a c -> m (Either b c)) -> m b
-whileRightM = impl . Left where
-    impl input action = do
-        result <- action input
-        case result of
-            Right c -> impl (Right c) action
-            Left  b -> return b
-
-unfoldM :: Monad m => m (Maybe a) -> m [a]
-unfoldM action = do
-    result <- action
-    case result of
-        Just a  -> liftM (prepend a) (unfoldM action)
-        Nothing -> return []
-
-unused :: Functor m => m a -> m ()
-unused = fmap (const ())
-
-usingManaged :: MonadManaged m => (forall r. (a -> IO r) -> IO r) -> m a
-usingManaged with = using (managed with)
 
 
 -------------------------------------------------------------------------- Applicative and Alternative
@@ -191,6 +152,62 @@ oneOrMore = some
 
 zeroOrMore :: Alternative f => f a -> f [a]
 zeroOrMore = many
+
+
+
+-------------------------------------------------------------------------- Monad
+
+ifM :: Monad m => m Bool -> m a -> m (Maybe a)
+ifM condition action = do
+    result <- condition
+    if result
+        then liftM Just action
+        else return Nothing
+
+elseM :: Monad m => m (Maybe a) -> m a -> m a
+elseM thenAction elseAction = do
+    result <- thenAction
+    case result of
+        Just a  -> return a
+        Nothing -> elseAction
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM condition = unused . ifM condition
+
+whileM :: Monad m => m Bool -> m ()
+whileM condition = whenM condition (whileM condition)
+
+whileJustM :: Monad m => a -> (a -> m (Maybe a)) -> m ()
+whileJustM a action = whileRightM a (liftM asRight . action . whichever)
+
+whileRightM :: Monad m => a -> (Either a c -> m (Either b c)) -> m b
+whileRightM = impl . Left where
+    impl input action = do
+        result <- action input
+        case result of
+            Right c -> impl (Right c) action
+            Left  b -> return b
+
+unfoldM :: Monad m => m (Maybe a) -> m [a]
+unfoldM action = do
+    result <- action
+    case result of
+        Just a  -> liftM (prepend a) (unfoldM action)
+        Nothing -> return []
+
+try :: MonadError e m => Either e a -> m a
+try = either throwError return
+
+doTry :: MonadError e m => m (Either e a) -> m a
+doTry action = do
+    result <- action
+    try result
+
+usingManaged :: MonadManaged m => (forall r. (a -> IO r) -> IO r) -> m a
+usingManaged with = using (managed with)
+
+unused :: Functor m => m a -> m ()
+unused = fmap (const ())
 
 
 
