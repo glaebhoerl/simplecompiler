@@ -26,6 +26,8 @@ executable simplecompiler
                        AutoDeriveTypeable,
                        BangPatterns,
                        BinaryLiterals,
+                       BlockArguments,
+--                     ^^^^^^^^^^^^^^ <3
                        ConstrainedClassMethods,
                        ConstraintKinds,
                        DataKinds,

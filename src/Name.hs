@@ -98,12 +98,12 @@ class ResolveNamesIn node where
 instance ResolveNamesIn AST.Function where
     resolveNamesIn AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         -- the argument types and return type are in global scope, must be resolved before entering any scope
-        argumentTypes <- forM arguments $ \AST.Argument { AST.argumentType } -> do
+        argumentTypes <- forM arguments \AST.Argument { AST.argumentType } -> do
             lookupName argumentType
         resolvedReturns <- mapM lookupName returns
         -- the argument names are in scope for the body, and may also be shadowed by it
-        (argumentNames, resolvedBody) <- enterScope $ do
-            argumentNames <- forM arguments $ \AST.Argument { AST.argumentName } -> do
+        (argumentNames, resolvedBody) <- enterScope do
+            argumentNames <- forM arguments \AST.Argument { AST.argumentName } -> do
                 bindName AST.Let argumentName
             resolvedBody <- resolveNamesIn body
             return (argumentNames, resolvedBody)
@@ -115,7 +115,7 @@ instance ResolveNamesIn AST.Function where
         }
 
 instance ResolveNamesIn AST.Block where
-    resolveNamesIn AST.Block { AST.exitTarget, AST.statements } = enterScope $ do
+    resolveNamesIn AST.Block { AST.exitTarget, AST.statements } = enterScope do
         resolvedTarget     <- mapM (bindName AST.Let) exitTarget
         resolvedStatements <- mapM resolveNamesIn statements
         return (AST.Block resolvedTarget resolvedStatements)
@@ -172,9 +172,9 @@ resolveNames = runExcept . evalStateT (Context Set.empty "" []) . runNameResolve
 
 resolveFunction :: AST.Function Text -> NameResolve (AST.Function ResolvedName)
 resolveFunction function@AST.Function { AST.functionName } = do
-    doModifyState $ \Context { functions, locals } -> do
+    doModifyState \Context { functions, locals } -> do
         assertEqM locals []
-        when (Set.member functionName functions) $ do
+        when (Set.member functionName functions) do
             throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
         return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals }
     resolveNamesIn function
@@ -230,7 +230,7 @@ instance NameResolveM NameResolve where
         case (locals context) of
             [] -> bug "Attempted to bind a name when not in a scope!"
             (scopeID, names) : rest -> do
-                when (Map.member name names) $ do
+                when (Map.member name names) do
                     throwError (NameConflict name (Path (currentFunction context) (map fst (locals context))))
                 setM (field @"locals") ((scopeID, Map.insert name info names) : rest)
                 return NameWith { name = Name LocalName { path = Path { function = currentFunction context, scope = map fst rest }, givenName = name }, info }
@@ -317,12 +317,12 @@ validate = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validateFunc
             Just Nothing -> do
                 return () -- builtin names have no stored info (TODO?)
             Just (Just info2) -> do
-                when (info1 != info2) $ do
+                when (info1 != info2) do
                     throwError (InfoMismatch (NameWith name info1) (NameWith name info2))
     recordName (NameWith name info) = do
-        doModifyState $ \context -> do
+        doModifyState \context -> do
             let scope = assert (head context)
-            when (Map.member name scope) $ do
+            when (Map.member name scope) do
                 throwError (Redefined name)
             return (prepend (Map.insert name (Just info) scope) (assert (tail context)))
         return ()

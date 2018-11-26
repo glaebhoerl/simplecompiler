@@ -165,8 +165,8 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         value1 <- translateTemporary expr1
         let opName = toLower (showText op)
         -- TODO use the provided name for the arg!
-        withContinuation (Right ("join_" ++ opName, BlockType [Type.Bool])) $ \joinPoint -> do
-            rhsBlock <- emitBlock opName (BlockType []) $ do
+        withContinuation (Right ("join_" ++ opName, BlockType [Type.Bool])) \joinPoint -> do
+            rhsBlock <- emitBlock opName (BlockType []) do
                 value2 <- translateTemporary expr2
                 return (Jump (Target joinPoint [value2]))
             let branches = case op of
@@ -195,33 +195,33 @@ translateStatement = \case
         emitStatement (Assign (translateName name) value)
     AST.IfThen expr block -> do
         value <- translateTemporary expr
-        withContinuation (Right ("join_if", BlockType [])) $ \joinPoint -> do
-            thenBlock <- emitBlock "if" (BlockType []) $ do
+        withContinuation (Right ("join_if", BlockType [])) \joinPoint -> do
+            thenBlock <- emitBlock "if" (BlockType []) do
                 translateStatements block
                 return (Jump (Target joinPoint []))
             return (Branch value [Target joinPoint [], Target thenBlock []])
     AST.IfThenElse expr block1 block2 -> do
         value <- translateTemporary expr
-        withContinuation (Right ("join_if_else", BlockType [])) $ \joinPoint -> do
-            thenBlock <- emitBlock "if" (BlockType []) $ do
+        withContinuation (Right ("join_if_else", BlockType [])) \joinPoint -> do
+            thenBlock <- emitBlock "if" (BlockType []) do
                 translateStatements block1
                 return (Jump (Target joinPoint []))
-            elseBlock <- emitBlock "else" (BlockType []) $ do
+            elseBlock <- emitBlock "else" (BlockType []) do
                 translateStatements block2
                 return (Jump (Target joinPoint []))
             return (Branch value [Target elseBlock [], Target thenBlock []])
     AST.Forever block -> do
-        withContinuation (Left (assert (AST.exitTarget block))) $ \_ -> do
-            foreverBlock <- emitBlock "forever" (BlockType []) $ do
+        withContinuation (Left (assert (AST.exitTarget block))) \_ -> do
+            foreverBlock <- emitBlock "forever" (BlockType []) do
                 blockBody <- currentBlock
                 translateStatements block
                 return (Jump (Target blockBody []))
             return (Jump (Target foreverBlock []))
     AST.While expr block -> do
-        withContinuation (Left (assert (AST.exitTarget block))) $ \joinPoint -> do
-            whileBlock <- emitBlock "while" (BlockType []) $ do
+        withContinuation (Left (assert (AST.exitTarget block))) \joinPoint -> do
+            whileBlock <- emitBlock "while" (BlockType []) do
                 conditionTest <- currentBlock
-                blockBody <- emitBlock "while_body" (BlockType []) $ do
+                blockBody <- emitBlock "while_body" (BlockType []) do
                     translateStatements block
                     return (Jump (Target conditionTest []))
                 value <- translateTemporary expr
@@ -265,7 +265,7 @@ translateFunction AST.Function { AST.functionName, AST.arguments, AST.body = fun
     returnBlock   = translateBlockName exitTarget
     translateImpl = do
         -- this means a somewhat-redundant additional block will be emitted as the body, but, it works
-        bodyBlockName <- emitBlock "body" (BlockType []) $ do
+        bodyBlockName <- emitBlock "body" (BlockType []) do
             translateStatements functionBody
             return (Jump (Target returnBlock [Literal Unit])) -- will be discarded as dead code when not needed
         emitTransfer (Jump (Target bodyBlockName []))
@@ -306,7 +306,7 @@ data IDSort = LetID | BlockID
 newID :: IDSort -> Translate ID
 newID sort = do
     -- NOTE incrementing first is significant, ID 0 is the root block!
-    modifyM (field @"lastID") $ \lastID ->
+    modifyM (field @"lastID") \lastID ->
         let isEven = case sort of LetID -> True; BlockID -> False
         in lastID + (if isEven == (lastID % 2 == 0) then 2 else 1)
     new <- getM (field @"lastID")
@@ -314,10 +314,11 @@ newID sort = do
 
 newArgumentIDs :: BlockType -> Translate [Name]
 newArgumentIDs (BlockType argTypes) = do
-    forM argTypes $ \argType -> do
+    forM argTypes \argType -> do
         argID <- newID LetID
         return (Name argID argType "")
 
+-- TODO a use case for `ifM`/`elseM`?
 ifDeadCodeThenElse :: a -> Translate a -> Translate a
 ifDeadCodeThenElse thenDefault elseAction = do
     emittedTransfer <- getM (blockField @"emittedTransfer")
@@ -330,12 +331,12 @@ ifNotDeadCode = ifDeadCodeThenElse ()
 
 instance TranslateM Translate where
     emitStatement :: Statement -> Translate ()
-    emitStatement statement = ifNotDeadCode $ do
+    emitStatement statement = ifNotDeadCode do
         modifyM (blockField @"statements") (++ [statement])
         return ()
 
     emitLet :: Maybe Type.TypedName -> Expression -> Translate Name
-    emitLet providedName expr = ifDeadCodeThenElse (Name (ID -1) Type.Unit "deadcode") $ do
+    emitLet providedName expr = ifDeadCodeThenElse (Name (ID -1) Type.Unit "deadcode") do
         name <- case providedName of
             Just astName -> do
                 let translatedName = translateName astName
@@ -348,21 +349,21 @@ instance TranslateM Translate where
         return name
 
     emitBlock :: Text -> BlockType -> Translate Transfer -> Translate BlockName
-    emitBlock description argTypes translateBody = ifDeadCodeThenElse (Name (ID -1) (BlockType []) "deadcode") $ do
+    emitBlock description argTypes translateBody = ifDeadCodeThenElse (Name (ID -1) (BlockType []) "deadcode") do
         blockID <- newID BlockID
         args    <- newArgumentIDs argTypes
         modifyM (field @"innermostBlock") (\previouslyInnermost -> BlockState blockID description args [] Nothing (Just previouslyInnermost))
         emittedBlockName <- currentBlock
         transferAtEnd <- translateBody
         emitTransfer transferAtEnd
-        whileM $ do
+        whileM do
             finishedBlock    <- liftM assert getFinishedBlock
             currentBlockName <- currentBlock -- possibly a continuation of `emittedBlockName`
             modifyM (field @"innermostBlock") (assert . enclosingBlock)
             parentEmittedTransfer <- getM (blockField @"emittedTransfer")
             case parentEmittedTransfer of
                 Just parentTransfer -> do
-                    modifyM (blockField @"statements") $ map $ \case
+                    (modifyM (blockField @"statements") . map) \case
                         BlockDecl name _ | name == currentBlockName ->
                             BlockDecl currentBlockName finishedBlock
                         otherStatement ->
@@ -374,7 +375,7 @@ instance TranslateM Translate where
         return emittedBlockName
 
     withContinuation :: Either Type.TypedName (Text, BlockType) -> (BlockName -> Translate Transfer) -> Translate ()
-    withContinuation blockSpec inBetweenCode = ifNotDeadCode $ do
+    withContinuation blockSpec inBetweenCode = ifNotDeadCode do
         nextBlockName <- case blockSpec of
             Left nextBlockAstName -> do
                 return (translateBlockName nextBlockAstName)
@@ -391,7 +392,7 @@ instance TranslateM Translate where
 
     -- this means early-escapes in the source
     emitTransfer :: Transfer -> Translate ()
-    emitTransfer transfer = ifNotDeadCode $ do
+    emitTransfer transfer = ifNotDeadCode do
         setM (blockField @"emittedTransfer") (Just transfer)
 
     currentBlock :: Translate BlockName
@@ -503,9 +504,9 @@ validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
             Call fn args -> case typeOf (Value fn) of
                 Type.Function argTypes returnType -> do
                     mapM_ checkName (match @"Named" fn)
-                    when (returnType != expectedType) $ do
+                    when (returnType != expectedType) do
                         throwError (TypeMismatch expectedType expr)
-                    when (length args != length argTypes) $ do
+                    when (length args != length argTypes) do
                         throwError (BadCallArgsCount expr)
                     zipWithM_ checkValue argTypes args
                 _ -> do
@@ -518,30 +519,30 @@ validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
             checkTarget target
         Branch value targets -> do
             checkValue Type.Bool value
-            when (length targets != 2) $ do
+            when (length targets != 2) do
                 throwError (BadTargetCount (Branch value targets))
             mapM_ checkTarget targets
     checkTarget target@Target { targetBlock, targetArgs } = do
         checkBlockName targetBlock
         let expectedTypes = parameters (nameType targetBlock)
-        when (length expectedTypes != length targetArgs) $ do
+        when (length expectedTypes != length targetArgs) do
             throwError (BadTargetArgsCount target)
         zipWithM_ checkValue expectedTypes targetArgs
     checkType expectedType expr = do
-        when (typeOf expr != expectedType) $ do
+        when (typeOf expr != expectedType) do
             throwError (TypeMismatch expectedType expr)
     checkBlockType expectedType block = do
-        when (typeOfBlock block != expectedType) $ do
+        when (typeOfBlock block != expectedType) do
             throwError (BlockTypeMismatch expectedType block)
     checkName name@Name { nameID, nameType, description } = do
-        when (nameID `is` (constructor @"ASTName" . constructor @"BuiltinName")) $ do  -- FIXME HACK
+        when (nameID `is` (constructor @"ASTName" . constructor @"BuiltinName")) do  -- FIXME HACK
             recordName name
         recordedType <- lookupType nameID
-        when (nameType != recordedType) $ do
+        when (nameType != recordedType) do
             throwError (Inconsistent (Name nameID nameType description) (Name nameID recordedType ""))
     checkBlockName Name { nameID, nameType, description } = do -- FIXME deduplicate
         recordedType <- lookupBlockType nameID
-        when (nameType != recordedType) $ do
+        when (nameType != recordedType) do
             throwError (BlockInconsistent (Name nameID nameType description) (Name nameID recordedType ""))
     lookupType nameID = do
         nameType <- lookupID nameID
@@ -561,8 +562,8 @@ validate = runExcept . evalStateT [Map.empty] . mapM_ checkFunction where
     recordName      = insertName . fmap Right
     recordBlockName = insertName . fmap Left
     insertName Name { nameID, nameType } = do
-        doModifyState $ \(names : parents) -> do
-            when (Map.member nameID names) $ do -- FIXME this should be a shallow check?
+        doModifyState \(names : parents) -> do
+            when (Map.member nameID names) do -- FIXME this should be a shallow check?
                 throwError (Redefined nameID)
             return (Map.insert nameID nameType names : parents)
         return ()

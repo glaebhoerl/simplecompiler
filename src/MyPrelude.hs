@@ -4,7 +4,7 @@ module MyPrelude (module MyPrelude, module Reexports) where
 
 -------------------------------------------------------------------------- reexports
 
-import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl, scanl, (/=))
+import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl, scanl, (/=), ($), ($!))
 import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, hGetContents, hPutStr, hPutStrLn)
 import System.IO                        as Reexports        (Handle, FilePath, IOMode (ReadMode, WriteMode, AppendMode, ReadWriteMode), stdin, stdout, stderr, withFile)
 import Data.Foldable                    as Reexports        (foldl')
@@ -74,6 +74,8 @@ tail = \case
 (!=) :: Eq a => a -> a -> Bool
 (!=) = (Prelude./=)
 
+strictly :: (a -> b) -> (a -> b)
+strictly = (Prelude.$!)
 
 
 -------------------------------------------------------------------------- other utility functions
@@ -287,7 +289,7 @@ instance Profunctor (Market a b) where
   rmap f (Market bt seta) = fmap f (Market bt seta)
 
 instance Choice (Market a b) where
-  right' (Market bt seta) = Market (Right . bt) $ \cs -> case cs of
+  right' (Market bt seta) = Market (Right . bt) \cs -> case cs of
     Left c -> Left (Left c)
     Right s -> case seta s of
       Left t -> Left (Right t)
@@ -350,7 +352,7 @@ doModifyState :: MonadState s m => (s -> m s) -> m s
 doModifyState modifyAction = do
     oldState <- getState
     newState <- modifyAction oldState
-    setState $! newState
+    strictly setState newState
     return newState
 
 setM :: MonadState outer m => Lens outer inner -> inner -> m ()
@@ -445,52 +447,52 @@ class Assert x where
     msgAssert :: HasCallStack => Text -> x -> AssertResult x
 
 assert :: (HasCallStack, Assert x) => x -> AssertResult x
-assert = withFrozenCallStack $
-    msgAssert ""
+assert = withFrozenCallStack
+    (msgAssert "")
 
 assertM :: (HasCallStack, Assert x, Monad m) => x -> m (AssertResult x)
-assertM x = withFrozenCallStack $
-    return $! assert x
+assertM x = withFrozenCallStack
+    (strictly return (assert x))
 
 msgAssertM :: (HasCallStack, Assert x, Monad m) => Text -> x -> m (AssertResult x)
-msgAssertM msg x = withFrozenCallStack $
-    return $! msgAssert msg x
+msgAssertM msg x = withFrozenCallStack
+    (strictly return (msgAssert msg x))
 
 assertEqM :: (HasCallStack, Eq a, Show a, Monad m) => a -> a -> m ()
-assertEqM a b = withFrozenCallStack $
-    msgAssertM (showText a ++ " == " ++ showText b) (a == b)
+assertEqM a b = withFrozenCallStack
+    (msgAssertM (showText a ++ " == " ++ showText b) (a == b))
 
 instance Assert Bool where
     type AssertResult Bool = ()
-    msgAssert msg = withFrozenCallStack $
-        bool (bug ("Failed assertion! " ++ msg)) ()
+    msgAssert msg = withFrozenCallStack
+        (bool (bug ("Failed assertion! " ++ msg)) ())
 
 instance Assert (Maybe a) where
     type AssertResult (Maybe a) = a
-    msgAssert msg = withFrozenCallStack $
-        fromMaybe (bug ("Failed assertion! " ++ msg))
+    msgAssert msg = withFrozenCallStack
+        (fromMaybe (bug ("Failed assertion! " ++ msg)))
 
 {- remove the Show constraint if it turns out to be problematic! -}
 instance Show e => Assert (Either e a) where
     type AssertResult (Either e a) = a
-    msgAssert msg = withFrozenCallStack $
-        fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e))
+    msgAssert msg = withFrozenCallStack
+        (fromRightOr (\e -> bug ("Failed assertion! " ++ msg ++ " " ++ showText e)))
 
 debug :: (HasCallStack, Show a) => a -> a
-debug a = withFrozenCallStack $
-    trace (showText a) a
+debug a = withFrozenCallStack
+    (trace (showText a) a)
 
 debugM :: (HasCallStack, Monad m, Show a) => a -> m ()
-debugM a = withFrozenCallStack $
-    traceM (showText a)
+debugM a = withFrozenCallStack
+    (traceM (showText a))
 
 prettyDebug :: (HasCallStack, Show a) => a -> a
-prettyDebug a = withFrozenCallStack $
-    trace (prettyShow a) a
+prettyDebug a = withFrozenCallStack
+    (trace (prettyShow a) a)
 
 prettyDebugM :: (HasCallStack, Monad m, Show a) => a -> m ()
-prettyDebugM a = withFrozenCallStack $
-    traceM (prettyShow a)
+prettyDebugM a = withFrozenCallStack
+    (traceM (prettyShow a))
 
 trace :: HasCallStack => Text -> a -> a
 trace text a = Debug.Trace.trace message a where
@@ -499,8 +501,8 @@ trace text a = Debug.Trace.trace message a where
     srcLoc = srcLocFile ++ ":" ++ show srcLocStartLine ++ ":" ++ show srcLocStartCol
 
 traceM :: (HasCallStack, Monad m) => Text -> m ()
-traceM text = withFrozenCallStack $
-    trace text (return ())
+traceM text = withFrozenCallStack
+    (trace text (return ()))
 
 
 

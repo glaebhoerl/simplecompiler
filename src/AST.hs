@@ -139,56 +139,56 @@ blockGrammar :: Grammar r (Maybe Text -> Block Text)
 blockGrammar = mdo
     expression <- expressionGrammar
     -----------------------------------------------------------
-    binding <- E.rule $ do
+    binding <- E.rule do
         letvar <- E.terminal (\case T.Keyword T.K_let -> Just Let; T.Keyword T.K_var -> Just Var; _ -> Nothing) -- TODO prism?
         name   <- tokenConstructor @"Name"
         token T.EqualsSign
         rhs    <- expression
         token T.Semicolon
         return (Binding letvar name rhs)
-    assign <- E.rule $ do
+    assign <- E.rule do
         lhs <- tokenConstructor @"Name"
         token T.EqualsSign
         rhs <- expression
         token T.Semicolon
         return (Assign lhs rhs)
-    ifthen <- E.rule $ do
+    ifthen <- E.rule do
         keyword T.K_if
         cond <- expression
         body <- block
         return (IfThen cond (body Nothing))
-    ifthenelse <- E.rule $ do
+    ifthenelse <- E.rule do
         keyword T.K_if
         cond  <- expression
         body1 <- block
         keyword T.K_else
         body2 <- block
         return (IfThenElse cond (body1 Nothing) (body2 Nothing))
-    forever <- E.rule $ do
+    forever <- E.rule do
         keyword T.K_forever
         body <- block
         return (Forever (body (Just "break")))
-    while <- E.rule $ do
+    while <- E.rule do
         keyword T.K_while
         cond <- expression
         body <- block
         return (While cond (body (Just "break")))
-    ret <- E.rule $ do
+    ret <- E.rule do
         keyword T.K_return
         arg <- liftA1 head (zeroOrOne expression)
         token T.Semicolon
         return (Return "return" arg)
-    break <- E.rule $ do
+    break <- E.rule do
         keyword T.K_break
         token T.Semicolon
         return (Break "break")
-    exprStatement <- E.rule $ do
+    exprStatement <- E.rule do
         expr <- expression
         token T.Semicolon
         return (Expression expr)
     -----------------------------------------------------
     statement <- E.rule (oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement])
-    block     <- E.rule $ do
+    block     <- E.rule do
         statements <- bracketed T.Curly (oneOrMore statement)
         return (\exitTarget -> Block { exitTarget, statements })
     return block
@@ -196,12 +196,12 @@ blockGrammar = mdo
 functionGrammar :: Grammar r (Function Text)
 functionGrammar = do
     block <- blockGrammar
-    argument <- E.rule $ do
+    argument <- E.rule do
         argumentName <- tokenConstructor @"Name"
         token T.Colon
         argumentType <- tokenConstructor @"Name"
         return Argument { argumentName, argumentType }
-    E.rule $ do
+    E.rule do
         keyword T.K_function
         functionName <- tokenConstructor @"Name"
         arguments    <- bracketed T.Round (separatedBy [T.Comma] argument)

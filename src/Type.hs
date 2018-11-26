@@ -125,7 +125,7 @@ inferExpression = \case
     AST.Named name -> do
         lookupType name
     AST.NumberLiteral int -> do
-        when (int > fromIntegral (maxBound :: Int64)) $ do
+        when (int > fromIntegral (maxBound :: Int64)) do
             reportError LiteralOutOfRange
         return Int
     AST.TextLiteral _ -> do
@@ -148,7 +148,7 @@ inferExpression = \case
         functionType <- lookupType function
         case functionType of
             Function argumentTypes returnType -> do
-                when (length argumentTypes != length arguments) $ do
+                when (length argumentTypes != length arguments) do
                     reportError WrongNumberOfArguments
                 zipWithM checkExpression argumentTypes arguments
                 return returnType
@@ -158,8 +158,8 @@ inferExpression = \case
 checkExpression :: TypeCheckM m => Type -> AST.Expression ResolvedName -> m ()
 checkExpression expected expr = do
     inferred <- inferExpression expr
-    when (expected != inferred) $ do
-        reportError $ TypeError TypeMismatch {
+    when (expected != inferred) do
+        (reportError . TypeError) TypeMismatch {
             expectedType = expected,
             actualType   = inferred,
             expression   = expr
@@ -171,7 +171,7 @@ checkStatement = \case
         inferredType <- inferExpression expr
         recordType inferredType name
     AST.Assign name expr -> do
-        when (Name.info name != AST.Var) $ do
+        when (Name.info name != AST.Var) do
             reportError AssignToLet
         nameType <- lookupType name
         checkExpression nameType expr
@@ -190,7 +190,7 @@ checkStatement = \case
     AST.Return target maybeExpr -> do
         returnType <- lookupType target
         mapM_ (checkExpression returnType) maybeExpr
-        when (maybeExpr == Nothing) $ do
+        when (maybeExpr == Nothing) do
             checkExpression Unit (AST.Named target) -- HACK
     AST.Break target -> do
         breakType <- lookupType target
@@ -205,7 +205,7 @@ checkBlock exitTargetType AST.Block { AST.exitTarget, AST.statements } = do
 
 checkFunction :: TypeCheckM m => AST.Function ResolvedName -> m ()
 checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
-    argumentTypes <- forM arguments $ \AST.Argument { AST.argumentName, AST.argumentType } -> do
+    argumentTypes <- forM arguments \AST.Argument { AST.argumentName, AST.argumentType } -> do
         resolvedType <- nameAsType argumentType
         recordType resolvedType argumentName
         return resolvedType
@@ -213,7 +213,7 @@ checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.b
     let returnType = fromMaybe Unit maybeReturnType
     recordType (Function argumentTypes returnType) functionName
     checkBlock returnType body
-    when (returnType != Unit && not (definitelyReturns (controlFlow body))) $ do
+    when (returnType != Unit && not (definitelyReturns (controlFlow body))) do
         reportError FunctionWithoutReturn
 
 data ControlFlow = ControlFlow {
@@ -276,7 +276,7 @@ checkTypes ast = do
 
 instance TypeCheckM TypeCheck where
     recordType typeOfName name = do
-        doModifyState $ \typeMap -> do
+        doModifyState \typeMap -> do
             assertM (not (Map.member (Name.name name) typeMap))
             return (Map.insert (Name.name name) typeOfName typeMap)
         return ()
@@ -330,7 +330,7 @@ validate :: AST TypedName -> Either ValidationError ()
 validate = runExcept . mapM_ validateFunction where
     validateFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         let getNameAsType = assert . builtinAsType . assert . match @"BuiltinName" . Name.name -- not very nice... :/
-        forM_ arguments $ \AST.Argument { AST.argumentName, AST.argumentType } -> do
+        forM_ arguments \AST.Argument { AST.argumentName, AST.argumentType } -> do
             validateType argumentType
             check (getNameAsType argumentType) (AST.Named argumentName)
         mapM_ validateType returns
@@ -341,7 +341,7 @@ validate = runExcept . mapM_ validateFunction where
         mapM_ (check returnType . AST.Named) (AST.exitTarget body) -- TODO check that it's Just!
         validateBlock body
     validateType typeName = do
-        when (Name.info typeName != Type) $ do
+        when (Name.info typeName != Type) do
             throwError (ExpectedType Type (AST.Named typeName))
     validateBlock = mapM_ validateStatement . AST.statements
     validateStatement = \case
@@ -362,7 +362,7 @@ validate = runExcept . mapM_ validateFunction where
             validateBlock body
         AST.Return target maybeExpr -> do
             mapM_ (check (typeOf (AST.Named target))) maybeExpr
-            when (maybeExpr == Nothing) $ do
+            when (maybeExpr == Nothing) do
                 check Unit (AST.Named target) -- HACK
         AST.Break target -> do
             check Unit (AST.Named target)
@@ -389,13 +389,13 @@ validate = runExcept . mapM_ validateFunction where
         AST.Call function args -> do
             case typeOf (AST.Named function) of
                 Function argTypes _ -> do
-                    when (length args != length argTypes) $ do
+                    when (length args != length argTypes) do
                         throwError (ExpectedArgumentCount (length argTypes) args)
                     zipWithM_ check argTypes args
                 _ -> do
                     throwError (ExpectedFunction (AST.Named function))
     check = checkLarge . SmallType
     checkLarge expectedType expr = do
-        when (SmallType (typeOf expr) != expectedType) $ do -- FIXME maybe `validate` shouldn't panic if it sees a `Type` in the wrong place, as `typeOf` does!!
+        when (SmallType (typeOf expr) != expectedType) do -- FIXME maybe `validate` shouldn't panic if it sees a `Type` in the wrong place, as `typeOf` does!!
             throwError (ExpectedType expectedType expr)
         validateExpression expr

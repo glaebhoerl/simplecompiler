@@ -113,7 +113,7 @@ llvmContextAndModule = do
     context   <- usingManaged L.withContext
     module'   <- usingManaged (L.withModuleFromAST context moduleAst)
     liftIO (L.verify module') -- TODO is there an exception to catch??
-    whenM (liftM optimize arguments) $ do -- FIXME if we generate invalid LLVM, we want to print it before verifying, otherwise after!
+    whenM (liftM optimize arguments) do -- FIXME if we generate invalid LLVM, we want to print it before verifying, otherwise after!
         passManager <- usingManaged (L.withPassManager (L.PassSetSpec [L.PromoteMemoryToRegister] Nothing Nothing Nothing))
         _ <- liftIO (L.runPassManager passManager module')
         return ()
@@ -146,15 +146,15 @@ build = do
     module' <- llvmModule
     target  <- usingManaged L.withHostTargetMachine
     let removeOrIgnore file = liftIO (catch (Directory.removeFile file) (\(_ :: SomeException) -> return ())) -- ugh
-    using $ managed_ $ \body -> do
+    usingManaged \body -> do
         L.writeObjectToFile target (L.File objFile) module'
-        result <- body
+        result <- body ()
         removeOrIgnore objFile
         return result
     let args = objFile : maybe [] (prepend "-o" . single . textToString) outFile
     (exitCode, out, err) <- liftIO (Process.readProcessWithExitCode "gcc" args "")
     removeOrIgnore objFile
-    when (exitCode != Exit.ExitSuccess) $ do
+    when (exitCode != Exit.ExitSuccess) do
         throwError (stringToText ("GCC reported error:\n" ++ out ++ "\n" ++ err))
 
 {- TODO port to new API
@@ -180,7 +180,7 @@ runOrcJit = do
 run :: Command ()
 run = do
     Arguments { outFile } <- arguments
-    when (isJust outFile) $ do
+    when (isJust outFile) do
         throwError "An output file doesn't make sense for the `run` command!"
     (context, module') <- llvmContextAndModule
     engine             <- usingManaged (L.withMCJIT context Nothing Nothing Nothing Nothing)
@@ -202,7 +202,7 @@ outputCommand command = do
     liftIO (Pretty.output handle result)
 
 commands :: [(Text, Command ())]
-commands = execWriter $ do
+commands = execWriter do
     let command name cmd = tell [(name, outputCommand cmd)]
     command "tokens" tokens
     command "ast"    ast
@@ -217,8 +217,8 @@ commands = execWriter $ do
     tell [("run",   run)]
 
 main :: IO ()
-main = runManaged $ do
-    result <- (runExceptT . runCommand) $ do
+main = runManaged do
+    result <- (runExceptT . runCommand) do
         Arguments { command } <- arguments
         fromMaybe (throwError "Command not recognized!") (lookup command commands)
     either (liftIO . hPutStrLn stderr) return result

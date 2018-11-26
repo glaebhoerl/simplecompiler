@@ -45,7 +45,7 @@ translateFunctions functions = result where
     generate = do
         emitGlobal externPrintf
         emitGlobal externScanf
-        emitBlock "return" $ do
+        emitBlock "return" do
             let returnArg = IR.Name (IR.ID 0) Type.Int ""
             translateArguments [returnArg]
             returnValue64 <- load returnArg
@@ -58,7 +58,7 @@ translateFunctions functions = result where
             emit (returnName32 := instr)
             let returnValue32 = LocalReference i32 returnName32
             return (L.Ret { L.returnOperand = Just returnValue32, L.metadata' = [] }, [])
-        emitBlock "start" $ do -- NOTE the name "start" is significant (to `runTwoPass`)
+        emitBlock "start" do -- NOTE the name "start" is significant (to `runTwoPass`)
             let block = todo
             translateBlock block
     externPrintf = L.functionDefaults {
@@ -255,7 +255,7 @@ globalConstant name type' value =
 translateStatement :: LLVM m => IR.Statement -> m ()
 translateStatement = \case
     IR.BlockDecl (IR.Name ident _ _) body -> do
-        emitBlock (translatedID ident) $ do
+        emitBlock (translatedID ident) do
             translateBlock body
     IR.Let name expr -> do
         alloca name
@@ -302,7 +302,7 @@ translateArguments :: LLVM m => [IR.Name] -> m ()
 translateArguments arguments = do
     -- [For each calling block: CalledByBlockWith { callingBlock = block's name, argumentsReceived = [values it passed for arguments] }]
     calledByBlocks <- getArguments
-    forM_ calledByBlocks $ \CalledByBlockWith { argumentsReceived } -> do
+    forM_ calledByBlocks \CalledByBlockWith { argumentsReceived } -> do
         assertEqM (length argumentsReceived) (length arguments)
     -- [For each calling block: [For each argument it passed: (the argument's value, the block's name)]]
     let incomingValuesGroupedByBlock =
@@ -313,9 +313,9 @@ translateArguments arguments = do
     -- [For each argument: [For each calling block: (the argument's value, the block's name)]]
     let incomingValuesGroupedByArg = transpose incomingValuesGroupedByBlock
     -- `++ repeat []` so we process all the arguments even if this block is never called (which is always the case in the FirstPass!!)
-    forM_ (zip arguments (incomingValuesGroupedByArg ++ repeat [])) $ \(argument, incomingValues) -> do
+    forM_ (zip arguments (incomingValuesGroupedByArg ++ repeat [])) \(argument, incomingValues) -> do
         phiName <- freshName
-        when (incomingValues != []) $ do
+        when (incomingValues != []) do
             let instr = L.Phi {
                 L.type'          = translatedType (IR.nameType argument),
                 L.incomingValues = incomingValues,
@@ -388,8 +388,8 @@ instance LLVM FirstPass where
         return (L.UnName num)
     emitBlock blockName bodyAction = do
         (_, callsBlocksWith) <- bodyAction
-        forM_ callsBlocksWith $ \CallsBlockWith { calledBlock, argumentsPassed } -> do
-            when (argumentsPassed != []) $ do
+        forM_ callsBlocksWith \CallsBlockWith { calledBlock, argumentsPassed } -> do
+            when (argumentsPassed != []) do
                 let calledByThisBlock = CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }
                 modifyM (field @"callersMap") (Map.alter (Just . prepend calledByThisBlock . fromMaybe []) calledBlock)
                 return ()
@@ -445,7 +445,7 @@ instance LLVM SecondPass where
         modifyM (field @"unfinishedBlocks") (UnfinishedBlock blockName [] . Just)
         (terminator, callsBlocksWith) <- bodyAction
         -- here we just assert that the `callsBlocksWith` is the same as what we got in the first pass
-        forM_ callsBlocksWith $ \CallsBlockWith { calledBlock, argumentsPassed } -> do
+        forM_ callsBlocksWith \CallsBlockWith { calledBlock, argumentsPassed } -> do
             -- TODO assert that the `calledBlock` is one of those in `terminator`
             savedCallers <- liftM (Map.findWithDefault [] calledBlock) (getM (field @"callersOfBlocks"))
             let calledByUs = filter (\CalledByBlockWith { callingBlock } -> callingBlock == blockName) savedCallers
@@ -455,7 +455,7 @@ instance LLVM SecondPass where
                     assertEqM calledByUs []
                 else do
                     assertEqM calledByUs [CalledByBlockWith { callingBlock = blockName, argumentsReceived = argumentsPassed }]
-        doModifyM (field @"finishedBlocks") $ \finishedBlocks -> do
+        doModifyM (field @"finishedBlocks") \finishedBlocks -> do
             instructions <- getM (field @"unfinishedBlocks" . field @"instructions")
             savedName    <- getM (field @"unfinishedBlocks" . field @"blockName")
             assertEqM blockName savedName
