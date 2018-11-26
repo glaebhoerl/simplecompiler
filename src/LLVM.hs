@@ -22,7 +22,7 @@ import qualified LLVM.AST.IntegerPredicate  as L
 import LLVM.AST          (Module, Definition, Global, Parameter (Parameter), BasicBlock (BasicBlock),
                           Instruction, Terminator, Named (Do, (:=)), Operand (LocalReference, ConstantOperand))
 import LLVM.AST.Constant (Constant (GlobalReference))
-import LLVM.AST.Type     (i1, i8, i32, i64, ptr)
+import LLVM.AST.Type     (i1, i8, i32, i64, ptr, void)
 
 import qualified Pretty
 import qualified Name
@@ -95,6 +95,9 @@ translatedType = \case
     Type.Bool -> i1
     Type.Int  -> i64
     Type.Text -> ptr i8
+    Type.Unit -> void
+    Type.Function argTypes returnType ->
+        ptr (L.FunctionType (translatedType returnType) (map translatedType (filter (!= Type.Unit) argTypes)) False)
 
 allocaForLet :: IR.Name -> Operand
 allocaForLet (IR.Name ident nameType _) = LocalReference (ptr (translatedType nameType)) (translatedID ident)
