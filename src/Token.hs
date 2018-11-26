@@ -152,35 +152,26 @@ instance P.Render Token where
 instance P.Render [Token] where
     render = P.hsep . map P.render
 
-{-
-matchRepresentable :: TextRepresentation a => a -> Prod r a
+type RE = RE.RE Char
+
+matchRepresentable :: TextRepresentation a => a -> RE a
 matchRepresentable a = do
-    _ <- (Compose . fmap pure . unused . E.list . map pure . textToString . toText) a
+    (unused . RE.string . textToString . toText) a
     return a
 
-matchEnumerable :: (Enumerable a, TextRepresentation a) => (a -> Token) -> Prod r Token
+matchEnumerable :: (Enumerable a, TextRepresentation a) => (a -> Token) -> RE Token
 matchEnumerable toToken = liftA1 toToken (oneOf (map matchRepresentable enumerate))
 
-whitespace :: Prod r Char
-whitespace = oneOf (map token [' ', '\n'])
-
-whitespaced :: Prod r output -> Prod r output
-whitespaced inner = do
-    _      <- whitespace
-    output <- inner
-    _      <- whitespace
-    return output
-
-literal :: Token -> Prod r Token
+literal :: Token -> RE Token
 literal = matchRepresentable
 
 orUnderscore :: (Char -> Bool) -> (Char -> Bool)
 orUnderscore f = \c -> f c || (c == '_')
 
-name :: Prod r Text
+name :: RE Text
 name = do
-    first <- satisfy (orUnderscore isAlpha)
-    rest  <- zeroOrMore (satisfy (orUnderscore isAlphaNum))
+    first <- RE.psym (orUnderscore isAlpha)
+    rest  <- zeroOrMore (RE.psym (orUnderscore isAlphaNum))
     return (stringToText (first : rest))
 
 nameOrKeyword :: Text -> Token
@@ -188,49 +179,37 @@ nameOrKeyword text' = case lookup text' (map (\keyword -> (toText keyword, keywo
     Just keyword -> Keyword keyword
     Nothing      -> Name text'
 
-number :: Prod r Integer
-number = do
-    minusSign <- zeroOrOne (token '-')
-    digits    <- oneOrMore (satisfy isDigit)
-    return (read (minusSign ++ digits))
+number :: RE Integer
+number = RE.signed RE.decimal
 
-text :: Prod r Text
+text :: RE Text
 text = do
-    _       <- token '"'
-    content <- zeroOrMore (satisfy (\c -> notElem c ['"', '\n']))
-    _       <- token '"'
+    unused (RE.sym '"')
+    content <- zeroOrMore (RE.psym (\c -> notElem c ['"', '\n']))
+    unused (RE.sym '"')
     return (stringToText content)
 
--- FIXME BUGS:
--- unary negation is ambiguous with both negative literals and binary negation :(
-tokens :: E.Grammar r (E.Prod r Expected (With SpanMonoid Char) [With SpanMonoid Token])
-tokens = mdo
-    spaces     <- E.rule $ liftA1 (const []) (getCompose (oneOrMore whitespace))
-    stringlike <- E.rule $ liftA1 single     (getCompose (oneOf [liftA1 nameOrKeyword name, liftA1 Number number]))
-    fixed      <- E.rule $ liftA1 single     (getCompose (oneOf
-        [whitespaced (matchEnumerable BinaryOperator),
-        matchEnumerable UnaryOperator,
-        matchEnumerable Bracket',
-        whitespaced (literal EqualsSign),
-        literal Comma,
-        literal Colon,
-        literal Semicolon,
-        liftA1 Text text]))
-    spacesRec     <- E.rule (oneOf [spaces,     liftA2 (++) spaces     stringlikeRec, liftA2 (++) spaces     fixedRec])
-    stringlikeRec <- E.rule (oneOf [stringlike, liftA2 (++) stringlike fixedRec,      liftA2 (++) stringlike spacesRec])
-    fixedRec      <- E.rule (oneOf [fixed,      liftA2 (++) fixed      spacesRec,     liftA2 (++) fixed      stringlikeRec, liftA2 (++) fixed fixedRec])
-    toks          <- E.rule (oneOf [spacesRec, stringlikeRec, fixedRec])
-    return toks
--}
+token :: RE Token
+token = oneOf
+    [liftA1 nameOrKeyword name,
+     liftA1 Number        number,
+     liftA1 Text          text,
+     matchEnumerable UnaryOperator,
+     matchEnumerable BinaryOperator,
+     matchEnumerable Bracket',
+     literal EqualsSign,
+     literal Comma,
+     literal Colon,
+     literal Semicolon]
 
-data Error = InvalidToken Loc.Pos deriving (Generic, Show)
+whitespace :: RE Char
+whitespace = oneOf (map RE.sym [' ', '\n'])
+
+tokens :: Lex.Lexer Token
+tokens = Lex.token (Lex.longest token) ++ Lex.whitespace (Lex.longest whitespace)
+
+data Error = InvalidTokenAt Loc.Pos deriving (Generic, Show)
 
 tokenize :: Text -> Either Error [Token]
-tokenize = todo {-checkResult . tryParse . addSpans where
-    addSpans    = map (mapInfo locToSpan) . zipWithLoc . textToString
-    locToSpan l = Span (spanFromTo l (loc (locLine l) (locColumn l + 1)))
-    tryParse    = fst . E.fullParses (E.parser tokens)
-    checkResult = \case
-        []    -> Left  Invalid
-        [one] -> Right one
-        more  -> Left  (Ambiguous (map (map (snd . unWith)) more))-}
+tokenize = fmap (map Loc.unLoc) . mapLeft errorConvert . Lex.streamToEitherList . Lex.runLexer tokens "TODO filename" . textToString
+    where errorConvert (Lex.LexicalError pos) = InvalidTokenAt pos
