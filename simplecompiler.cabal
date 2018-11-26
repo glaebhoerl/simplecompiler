@@ -57,7 +57,6 @@ executable simplecompiler
                        PatternSynonyms,
                        PolyKinds,
                        RankNTypes,
-                       RecursiveDo,
                        ScopedTypeVariables,
                        StandaloneDeriving,
                        StrictData,
@@ -86,6 +85,8 @@ executable simplecompiler
 --         Very new and fancy and powerful. Give it some time.
 --     UndecidableInstances, UndecidableSuperClasses:
 --         Not evil, but use a local `LANGUAGE` pragma to call it out if it's necessary.
+--     RecursiveDo:
+--         Every time I have tried to use this, I eventually got undebuggable <<loop>>s.
 
   build-depends:       base >= 4.7 && < 5,
                        bytestring,
