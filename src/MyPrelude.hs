@@ -4,7 +4,7 @@ module MyPrelude (module MyPrelude, module Reexports) where
 
 -------------------------------------------------------------------------- reexports
 
-import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl, (/=))
+import Prelude                          as Reexports hiding (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, head, tail, (++), foldl, scanl, (/=))
 import Data.Text.IO                     as Reexports        (putStr, putStrLn, getLine, getContents, interact, readFile, writeFile, appendFile, hGetContents, hPutStr, hPutStrLn)
 import System.IO                        as Reexports        (Handle, FilePath, IOMode (ReadMode, WriteMode, AppendMode, ReadWriteMode), stdin, stdout, stderr, withFile)
 import Data.Foldable                    as Reexports        (foldl')
@@ -12,7 +12,7 @@ import Data.Int                         as Reexports        ( Int,  Int8,  Int16
 import Data.Word                        as Reexports        (Word, Word8, Word16, Word32, Word64)
 import Data.Either                      as Reexports        (isLeft, isRight, fromLeft, fromRight)
 import Data.Maybe                       as Reexports        (isJust, isNothing, fromMaybe, maybeToList, catMaybes, mapMaybe)
-import Data.List                        as Reexports        (uncons, intercalate)
+import Data.List                        as Reexports        (scanl', uncons, intercalate)
 import Data.Function                    as Reexports        (fix, on)
 import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
 import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, (>=>), (<=<), forever, join, guard, when, unless)
@@ -99,21 +99,32 @@ singleIf = pureIf -- see below
 justIf :: Bool -> a -> Maybe a
 justIf = pureIf
 
+asLeft :: Maybe a -> Either a ()
+asLeft = maybe (Right ()) Left
+
+asRight :: Maybe a -> Either () a
+asRight = reflect . asLeft
+
 left :: Either a b -> Maybe a
 left = either Just (const Nothing)
 
 right :: Either a b -> Maybe b
-right = either (const Nothing) Just
+right = left . reflect
 
 fromLeftOr :: (b -> a) -> Either a b -> a
-fromLeftOr f = either id f
+fromLeftOr f = whichever . fmap f
 
 fromRightOr :: (a -> b) -> Either a b -> b
-fromRightOr f = either f id
+fromRightOr f = fromLeftOr f . reflect
 
--- or Bifunctors I guess, or via `flip`, ...
+reflect :: Either a b -> Either b a
+reflect = either Right Left
+
+whichever :: Either a a -> a
+whichever = either id id
+
 mapLeft :: (a -> a') -> Either a b -> Either a' b
-mapLeft f = either (Left . f) Right
+mapLeft f = reflect . fmap f . reflect
 
 try :: MonadError e m => Either e a -> m a
 try = either throwError return
@@ -132,11 +143,7 @@ whileM :: Monad m => m Bool -> m ()
 whileM condition = whenM condition (whileM condition)
 
 whileJustM :: Monad m => a -> (a -> m (Maybe a)) -> m ()
-whileJustM a action = do
-    result <- action a
-    case result of
-        Just a  -> whileJustM a action
-        Nothing -> return ()
+whileJustM a action = whileRightM a (liftM asRight . action . whichever)
 
 whileRightM :: Monad m => a -> (Either a c -> m (Either b c)) -> m b
 whileRightM = impl . Left where
