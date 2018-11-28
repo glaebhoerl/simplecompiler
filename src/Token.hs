@@ -210,6 +210,6 @@ tokens = Lex.token (Lex.longest token) ++ Lex.whitespace (Lex.longest whitespace
 
 data Error = InvalidTokenAt Loc.Pos deriving (Generic, Show)
 
-tokenize :: Text -> Either Error [Token]
-tokenize = fmap (map Loc.unLoc) . mapLeft errorConvert . Lex.streamToEitherList . Lex.runLexer tokens "TODO filename" . textToString
+tokenize :: Text -> Either Error [Loc.L Token]
+tokenize = mapLeft errorConvert . Lex.streamToEitherList . Lex.runLexer tokens "TODO filename" . textToString
     where errorConvert (Lex.LexicalError pos) = InvalidTokenAt pos

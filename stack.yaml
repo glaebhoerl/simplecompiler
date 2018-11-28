@@ -2,7 +2,7 @@ flags:             {}
 extra-package-dbs: []
 packages:    ['.']
 extra-deps:  [lexer-applicative-2.1.0.2]
-#resolver:    nightly-2017-07-25
+#resolver:   nightly-2017-07-25
 #resolver:   lts-12.10
 resolver:    nightly-2018-11-24
 allow-newer: true # for intero
