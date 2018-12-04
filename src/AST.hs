@@ -84,14 +84,13 @@ data Function a name = Function {
     body         :: NodeWith Block a name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-type Located node = NodeWith node Loc
 
 
 ----------------------------------------------------------------------------- parsing
 
 type Expected         = Text
 type Prod      r      = Compose (E.Prod r Expected (With Loc T.Token)) (With Loc)
-type Grammar   r node = E.Grammar r (Prod r (Located node Text))
+type Grammar   r node = E.Grammar r (Prod r (node Loc Text))
 
 token :: T.Token -> Prod r ()
 token = unused . Compose . E.token . pure
@@ -122,15 +121,15 @@ followedBy = (*>)
 -- The explanation is that Applicative only handles combining the sublocations into the location of the final result --
 --   but we don't just want the location of the whole tree, we also want the locations of all the sub-nodes!
 -- So this takes a snapshot of the location for the subnode, and also lets `Applicative` go on combining it into the location of the parent node.
-located :: Prod r (node Loc Text) -> Prod r (Located node Text)
+located :: Prod r (node Loc Text) -> Prod r (NodeWith node Loc Text)
 located = Compose . fmap dupLocated . getCompose where
     dupLocated node = With (getWith node) (NodeWith node)
 
 nodeRule :: Prod r (node Loc Text) -> Grammar r node
-nodeRule = fmap Compose . E.rule . getCompose . located
+nodeRule = fmap Compose . E.rule . getCompose
 
-ruleCases :: [Prod r (node Loc Text)] -> Grammar r node
-ruleCases cases = nodeRule (oneOf cases)
+locatedNode :: Prod r (node Loc Text) -> Grammar r (NodeWith node)
+locatedNode = nodeRule . located
 
 -- from tightest to loosest; operators within a group have equal precedence
 precedenceGroups :: [[BinaryOperator]]
@@ -147,103 +146,115 @@ precedenceGroups = assert (justIf isWellFormed listOfGroups) where
 
 data BinaryOperationList a name
     = SingleExpression (NodeWith Expression a name)
-    | BinaryOperation  (NodeWith Expression a name) BinaryOperator (Located BinaryOperationList name)
+    | BinaryOperation  (NodeWith Expression a name) BinaryOperator (BinaryOperationList a name)
+    deriving Show
 
-resolvePrecedences :: Located BinaryOperationList Text -> Located Expression Text
-resolvePrecedences binaryOperationList = todo {-finalResult where
+resolvePrecedences :: BinaryOperationList Loc Text -> NodeWith Expression Loc Text
+resolvePrecedences binaryOperationList = finalResult where
     finalResult = case allPrecedencesResolved of
         SingleExpression expr -> expr
         list                  -> bug ("Unresolved binary operator precedence: " ++ prettyShow list)
     allPrecedencesResolved = foldl' resolveOnePrecedenceLevel binaryOperationList precedenceGroups
     resolveOnePrecedenceLevel binOpList precedenceGroup = case binOpList of
         BinaryOperation expr1 op1 (BinaryOperation expr2 op2 rest)
-            | elem op1 precedenceGroup -> resolveOnePrecedenceLevel (BinaryOperation (BinaryOperator expr1 op1 expr2) op2 rest) precedenceGroup
+            | elem op1 precedenceGroup -> resolveOnePrecedenceLevel (BinaryOperation (locatedBinaryOperator expr1 op1 expr2) op2 rest) precedenceGroup
             | otherwise                -> BinaryOperation expr1 op1 (resolveOnePrecedenceLevel (BinaryOperation expr2 op2 rest) precedenceGroup)
         BinaryOperation expr1 op (SingleExpression expr2)
-            | elem op  precedenceGroup -> SingleExpression (BinaryOperator expr1 op expr2)
-        other -> other-}
+            | elem op  precedenceGroup -> SingleExpression (locatedBinaryOperator expr1 op expr2)
+        other -> other
+    locatedBinaryOperator expr1 op expr2 = NodeWith (With combinedLoc (BinaryOperator expr1 op expr2)) where
+        combinedLoc = mconcat (map (getWith . getNodeWith) [expr1, expr2])
 
-expressionGrammar :: Grammar r Expression
+expressionGrammar :: Grammar r (NodeWith Expression)
 expressionGrammar = mdo
-    atom     <- ruleCases [liftA1 Named         (tokenConstructor @"Name"),
-                           liftA1 NumberLiteral (tokenConstructor @"Number"),
-                           liftA1 TextLiteral   (tokenConstructor @"Text"),
-                           liftA2 Call          (tokenConstructor @"Name") (bracketed T.Round (separatedBy T.Comma expression)),
-                           liftA1 nodeWithout (bracketed T.Round expression)]
-    unary    <- ruleCases [liftA2 UnaryOperator (tokenConstructor @"UnaryOperator") atom,
-                           liftA1 nodeWithout atom] -- TODO is there any nicer way to do this
-    binaries <- ruleCases [liftA3 BinaryOperation  unary (tokenConstructor @"BinaryOperator") binaries,
-                           liftA1 SingleExpression unary]
+    atom <- (locatedNode . oneOf)
+        [
+            liftA1 Named         (tokenConstructor @"Name"),
+            liftA1 NumberLiteral (tokenConstructor @"Number"),
+            liftA1 TextLiteral   (tokenConstructor @"Text"),
+            liftA2 Call          (tokenConstructor @"Name") (bracketed T.Round (separatedBy T.Comma expression)),
+            liftA1 nodeWithout   (bracketed T.Round expression)
+        ]
+    unary <- (locatedNode . oneOf)
+        [
+            liftA2 UnaryOperator (tokenConstructor @"UnaryOperator") atom,
+            liftA1 nodeWithout atom
+        ]
+    binaries <- (nodeRule . oneOf)
+        [
+            liftA3 BinaryOperation  unary (tokenConstructor @"BinaryOperator") binaries,
+            liftA1 SingleExpression unary
+        ]
     let expression = liftA1 resolvePrecedences binaries
     return expression
 
-blockGrammar :: Grammar r Block
+blockGrammar :: Grammar r (NodeWith Block)
 blockGrammar = mdo
     expression <- expressionGrammar
     -----------------------------------------------------------
-    binding <- nodeRule do
+    binding <- locatedNode do
         letvar <- terminal (\case T.Keyword T.K_let -> Just Let; T.Keyword T.K_var -> Just Var; _ -> Nothing) -- TODO prism?
         name   <- tokenConstructor @"Name"
         token T.EqualsSign
         rhs    <- expression
         token T.Semicolon
         return (Binding letvar name rhs)
-    assign <- nodeRule do
+    assign <- locatedNode do
         lhs <- tokenConstructor @"Name"
         token T.EqualsSign
         rhs <- expression
         token T.Semicolon
         return (Assign lhs rhs)
-    ifthen <- nodeRule do
+    ifthen <- locatedNode do
         keyword T.K_if
         cond <- expression
         body <- block
         return (IfThen cond body)
-    ifthenelse <- nodeRule do
+    ifthenelse <- locatedNode do
         keyword T.K_if
         cond  <- expression
         body1 <- block
         keyword T.K_else
         body2 <- block
         return (IfThenElse cond body1 body2)
-    forever <- nodeRule do
+    forever <- locatedNode do
         keyword T.K_forever
         body <- block
         return (Forever body)
-    while <- nodeRule do
+    while <- locatedNode do
         keyword T.K_while
         cond <- expression
         body <- block
         return (While cond body)
-    ret <- nodeRule do
+    ret <- locatedNode do
         keyword T.K_return
         arg <- liftA1 head (zeroOrOne expression)
         token T.Semicolon
         return (Return "return" arg)
-    break <- nodeRule do
+    break <- locatedNode do
         keyword T.K_break
         token T.Semicolon
         return (Break "break")
-    exprStatement <- nodeRule do
+    exprStatement <- locatedNode do
         expr <- expression
         token T.Semicolon
         return (Expression expr)
     -----------------------------------------------------
-    let statement = oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement] -- TODO this might need to be a `rule` to avoid <<loop>>!
-    block <- nodeRule do
+    statement <- nodeRule (oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement])
+    block <- locatedNode do
         statements <- bracketed T.Curly (oneOrMore statement)
-        return Block { exitTarget = Nothing, statements }
+        return Block { exitTarget = Nothing, statements } -- TODO fill in the `exitTarget` again!!
     return block
 
-functionGrammar :: Grammar r Function
+functionGrammar :: Grammar r (NodeWith Function)
 functionGrammar = do
     block <- blockGrammar
-    argument <- nodeRule do
+    argument <- locatedNode do
         argumentName <- tokenConstructor @"Name"
         token T.Colon
         argumentType <- tokenConstructor @"Name"
         return Argument { argumentName, argumentType }
-    nodeRule do
+    locatedNode do
         keyword T.K_function
         functionName <- tokenConstructor @"Name"
         arguments    <- bracketed T.Round (separatedBy T.Comma argument)
@@ -251,15 +262,12 @@ functionGrammar = do
         body         <- block
         return Function { functionName, arguments, returns, body }
 
-
 type AST a name = [NodeWith Function a name]
 
 data Error
     = Invalid Int [Expected] [With Loc T.Token]
     | Ambiguous [AST Loc Text]
-    deriving (Generic)
-
-deriving instance Show Error
+    deriving (Generic, Show)
 
 parse :: [With Loc T.Token] -> Either Error (AST Loc Text)
 parse = checkResult . E.fullParses parser where

@@ -23,7 +23,6 @@ import Control.Monad.Except             as Reexports        (ExceptT, Except, Mo
 import Control.Monad.Reader             as Reexports        (ReaderT, Reader, MonadReader, ask, local)
 import Control.Monad.Writer.Strict      as Reexports        (WriterT, Writer, MonadWriter, tell, runWriterT, runWriter, execWriterT, execWriter)
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
-import Data.Functor.Compose             as Reexports        (Compose (Compose, getCompose))
 import Data.ByteString                  as Reexports        (ByteString)
 import Data.Text                        as Reexports        (Text, toLower, toUpper)
 import Data.Text.Prettyprint.Doc        as Reexports        (Doc)
@@ -54,7 +53,6 @@ import Data.Profunctor (Profunctor (lmap, rmap), Choice (right'))
 import GHC.Stack (HasCallStack, withFrozenCallStack)
 import qualified GHC.Stack as Stack
 import qualified Debug.Trace
-
 
 
 -------------------------------------------------------------------------- prelude replacements
@@ -560,23 +558,16 @@ data UnaryOperator
 instance Enumerable UnaryOperator
 
 
-newtype Disregard a = Disregard {
-    regard :: a
-} deriving (Generic, Show, Functor, Foldable, Traversable, Semigroup, Monoid)
-
-instance Eq (Disregard a) where
-    _ == _ = True
-
-instance Ord (Disregard a) where
-    compare _ _ = EQ
-
 data With a b = With {
     getWith :: a,
     unWith  :: b
 } deriving (Generic, Show, Functor, Foldable, Traversable)
 
-deriving via (With (Disregard a) b) instance Eq  b => Eq  (With a b)
-deriving via (With (Disregard a) b) instance Ord b => Ord (With a b)
+instance Eq b => Eq (With a b) where
+    (==) = (==) `on` unWith
+
+instance Ord b => Ord (With a b) where
+    compare = compare `on` unWith
 
 instance Monoid a => Applicative (With a) where
     pure = With mempty
@@ -585,11 +576,6 @@ instance Monoid a => Applicative (With a) where
 newtype NodeWith node a b = NodeWith {
     getNodeWith :: With a (node a b)
 } deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
-
--- hmm do we even need this...?
-deriving via Compose (With (a :: *)) ((node :: * -> * -> *) a)
-    instance (Monoid a, Applicative (node a)) =>
-        (Applicative (NodeWith node a)) -- well that's a mouthful
 
 nodeWithout :: NodeWith node a b -> node a b
 nodeWithout = unWith . getNodeWith
@@ -602,3 +588,21 @@ mapNodeM f = liftM NodeWith . mapM f . getNodeWith
 
 forNodeM :: Monad m => NodeWith node a b1 -> (node a b1 -> m (node a b2)) -> m (NodeWith node a b2)
 forNodeM = flip mapNodeM
+
+-- Workaround for bug with the `Alternative` instance in base: https://ghc.haskell.org/trac/ghc/ticket/15992
+newtype Compose f g a = Compose { getCompose :: f (g a) } deriving (Generic, Eq, Ord, Show, Functor, Foldable)
+
+instance (Traversable f, Traversable g) => Traversable (Compose f g) where
+    traverse f (Compose t) = Compose <$> traverse (traverse f) t
+
+instance (Applicative f, Applicative g) => Applicative (Compose f g) where
+    pure x = Compose (pure (pure x))
+    Compose f <*> Compose x = Compose (liftA2 (<*>) f x)
+    liftA2 f (Compose x) (Compose y) =
+      Compose (liftA2 (liftA2 f) x y)
+
+instance (Alternative f, Applicative g) => Alternative (Compose f g) where
+    empty = Compose empty
+    Compose a <|> Compose b = Compose (a <|> b)
+    many = Compose . liftA1 sequenceA . many . getCompose
+    some = Compose . liftA1 sequenceA . some . getCompose
