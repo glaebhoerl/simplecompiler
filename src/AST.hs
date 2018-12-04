@@ -220,12 +220,12 @@ blockGrammar = mdo
     forever <- locatedNode do
         keyword T.K_forever
         body <- block
-        return (Forever body)
+        return (Forever (mapNode (set (field @"exitTarget") (Just "break")) body))
     while <- locatedNode do
         keyword T.K_while
         cond <- expression
         body <- block
-        return (While cond body)
+        return (While cond (mapNode (set (field @"exitTarget") (Just "break")) body))
     ret <- locatedNode do
         keyword T.K_return
         arg <- liftA1 head (zeroOrOne expression)
@@ -243,7 +243,7 @@ blockGrammar = mdo
     statement <- nodeRule (oneOf [binding, assign, ifthen, ifthenelse, forever, while, ret, break, exprStatement])
     block <- locatedNode do
         statements <- bracketed T.Curly (oneOrMore statement)
-        return Block { exitTarget = Nothing, statements } -- TODO fill in the `exitTarget` again!!
+        return Block { exitTarget = Nothing, statements }
     return block
 
 functionGrammar :: Grammar r (NodeWith Function)
@@ -260,7 +260,7 @@ functionGrammar = do
         arguments    <- bracketed T.Round (separatedBy T.Comma argument)
         returns      <- liftA1 head (zeroOrOne (keyword T.K_returns `followedBy` tokenConstructor @"Name"))
         body         <- block
-        return Function { functionName, arguments, returns, body }
+        return Function { functionName, arguments, returns, body = mapNode (set (field @"exitTarget") (Just "return")) body }
 
 type AST a name = [NodeWith Function a name]
 
