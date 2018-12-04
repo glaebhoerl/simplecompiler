@@ -36,6 +36,7 @@ executable simplecompiler
                        DeriveFunctor,
                        DeriveGeneric,
                        DeriveTraversable,
+                       DerivingVia,
                        EmptyCase,
                        ExistentialQuantification,
                        FlexibleContexts,

@@ -152,6 +152,9 @@ instance P.Render Token where
 instance P.Render [Token] where
     render = P.hsep . map P.render
 
+instance P.Render [With Loc Token] where -- sighhh
+    render = P.hsep . map P.render
+
 type RE = RE.RE Char
 
 matchRepresentable :: TextRepresentation a => a -> RE a
@@ -210,6 +213,7 @@ tokens = Lex.token (Lex.longest token) ++ Lex.whitespace (Lex.longest whitespace
 
 data Error = InvalidTokenAt Loc.Pos deriving (Generic, Show)
 
-tokenize :: Text -> Either Error [Loc.L Token]
-tokenize = mapLeft errorConvert . Lex.streamToEitherList . Lex.runLexer tokens "TODO filename" . textToString
-    where errorConvert (Lex.LexicalError pos) = InvalidTokenAt pos
+tokenize :: Text -> Either Error [With Loc Token]
+tokenize = fmap (map locConvert) . mapLeft errorConvert . Lex.streamToEitherList . Lex.runLexer tokens "TODO filename" . textToString where
+    errorConvert (Lex.LexicalError pos) = InvalidTokenAt pos
+    locConvert (Loc.L loc token) = With loc token

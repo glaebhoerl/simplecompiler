@@ -64,34 +64,34 @@ getInput = do
         Nothing       -> liftIO getContents
         Just fileName -> liftIO (readFile (textToString fileName)) -- TODO catch exceptions :\
 
-tokens :: Command [Token]
+tokens :: Command [With Loc Token]
 tokens = do
     input <- getInput
     try (mapLeft prettyShow (Token.tokenize input))
 
-ast :: Command (AST Text)
+ast :: Command (AST Loc Text)
 ast = do
     input <- tokens
     try (mapLeft prettyShow (AST.parse input))
 
-names :: Command (AST ResolvedName)
+names :: Command (AST Loc ResolvedName)
 names = do
     input  <- ast
-    result <- try (mapLeft prettyShow (Name.resolveNames input))
-    _      <- try (mapLeft prettyShow (Name.validate     result))
+    result <- try (mapLeft prettyShow (Name.resolveNames  input))
+    _      <- try (mapLeft prettyShow (Name.validateNames result))
     return result
 
-types :: Command (AST TypedName)
+types :: Command (AST Loc TypedName)
 types = do
     input  <- names
-    result <- try (mapLeft prettyShow (Type.checkTypes input))
-    _      <- try (mapLeft prettyShow (Name.validate   result)) -- make sure types are assigned to names consistently!
-    _      <- try (mapLeft prettyShow (Type.validate   result))
+    result <- try (mapLeft prettyShow (Type.checkTypes    input))
+    _      <- try (mapLeft prettyShow (Name.validateNames result)) -- make sure types are assigned to names consistently!
+    _      <- try (mapLeft prettyShow (Type.validateTypes result))
     return result
 
 ir :: Command [IR.Function]
 ir = do
-    result <- liftM (map IR.translateFunction) types
+    result <- liftM (map (IR.translateFunction . nodeWithout)) types
     _      <- try (mapLeft prettyShow (IR.validate result))
     opt    <- liftM optimize arguments
     if opt

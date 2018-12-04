@@ -13,10 +13,9 @@ import Data.Word                        as Reexports        (Word, Word8, Word16
 import Data.Either                      as Reexports        (isLeft, isRight, fromLeft, fromRight)
 import Data.Maybe                       as Reexports        (isJust, isNothing, fromMaybe, maybeToList, catMaybes, mapMaybe)
 import Data.List                        as Reexports        (scanl', uncons, intercalate)
-import Data.Function                    as Reexports        (fix, on)
-import Control.Applicative              as Reexports        (Alternative (empty, (<|>)), liftA2, liftA3)
-import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, (>=>), (<=<), forever, join, guard, when, unless)
-import Control.Monad.Fix                as Reexports        (MonadFix   (mfix))
+import Data.Function                    as Reexports        (on)
+import Control.Applicative              as Reexports        (Alternative (empty), liftA2, liftA3)
+import Control.Monad                    as Reexports        (liftM, forM, forM_, zipWithM, zipWithM_, foldM, foldM_, filterM, replicateM, forever, join, guard, when, unless)
 import Control.Monad.Trans              as Reexports        (MonadTrans (lift))
 import Control.Monad.IO.Class           as Reexports        (MonadIO    (liftIO))
 import Control.Monad.Managed.Safe       as Reexports        (Managed, MonadManaged (using), managed, managed_, runManaged)
@@ -24,6 +23,7 @@ import Control.Monad.Except             as Reexports        (ExceptT, Except, Mo
 import Control.Monad.Reader             as Reexports        (ReaderT, Reader, MonadReader, ask, local)
 import Control.Monad.Writer.Strict      as Reexports        (WriterT, Writer, MonadWriter, tell, runWriterT, runWriter, execWriterT, execWriter)
 import Control.Monad.State.Strict       as Reexports        (StateT,  State,  MonadState)
+import Data.Functor.Compose             as Reexports        (Compose (Compose, getCompose))
 import Data.ByteString                  as Reexports        (ByteString)
 import Data.Text                        as Reexports        (Text, toLower, toUpper)
 import Data.Text.Prettyprint.Doc        as Reexports        (Doc)
@@ -32,6 +32,7 @@ import Data.Map.Strict                  as Reexports        (Map)
 import GHC.Generics                     as Reexports        (Generic)
 import Data.Generics.Product.Fields     as Reexports        (HasField')
 import Data.Generics.Sum.Constructors   as Reexports        (AsConstructor')
+import Data.Loc                         as Reexports        (Loc)
 
 
 
@@ -46,7 +47,7 @@ import qualified Control.Monad.Reader           as Reader      (runReaderT, runR
 import qualified Control.Monad.State.Strict     as State       (runStateT,  runState,  evalStateT,  evalState,  execStateT,  execState, get, put)
 import qualified Data.Generics.Product.Fields   as GenericLens (field')
 import qualified Data.Generics.Sum.Constructors as GenericLens (_Ctor')
-import Control.Applicative   (some, many, Const (Const, getConst))
+import Control.Applicative   (some, many, Const (Const, getConst), (<|>))
 import Data.Functor.Identity (Identity (Identity, runIdentity))
 import Data.Profunctor (Profunctor (lmap, rmap), Choice (right'))
 
@@ -105,28 +106,28 @@ asLeft :: Maybe a -> Either a ()
 asLeft = maybe (Right ()) Left
 
 asRight :: Maybe a -> Either () a
-asRight = reflect . asLeft
+asRight = reflection . asLeft
 
 left :: Either a b -> Maybe a
 left = either Just (const Nothing)
 
 right :: Either a b -> Maybe b
-right = left . reflect
+right = left . reflection
 
 fromLeftOr :: (b -> a) -> Either a b -> a
 fromLeftOr f = whichever . fmap f
 
 fromRightOr :: (a -> b) -> Either a b -> b
-fromRightOr f = fromLeftOr f . reflect
+fromRightOr f = fromLeftOr f . reflection
 
-reflect :: Either a b -> Either b a
-reflect = either Right Left
+reflection :: Either a b -> Either b a
+reflection = either Right Left
 
 whichever :: Either a a -> a
 whichever = either id id
 
 mapLeft :: (a -> a') -> Either a b -> Either a' b
-mapLeft f = reflect . fmap f . reflect
+mapLeft f = reflection . fmap f . reflection
 
 
 
@@ -147,7 +148,7 @@ oneOf = foldl' (<|>) empty
 -- sometimes we want the Maybe version, sometimes we want the list version...
 -- (`liftA1 head (zeroOrOne x)` recovers the Maybe version)
 zeroOrOne :: Alternative f => f a -> f [a]
-zeroOrOne a = liftA0 [] <|> liftA1 single a
+zeroOrOne a = oneOf [liftA0 [], liftA1 single a]
 
 oneOrMore :: Alternative f => f a -> f [a]
 oneOrMore = some
@@ -200,8 +201,8 @@ unfoldM action = do
 try :: MonadError e m => Either e a -> m a
 try = either throwError return
 
-doTry :: MonadError e m => m (Either e a) -> m a
-doTry action = do
+tryM :: MonadError e m => m (Either e a) -> m a
+tryM action = do
     result <- action
     try result
 
@@ -557,3 +558,47 @@ data UnaryOperator
     deriving (Generic, Eq, Show, Enum, Bounded)
 
 instance Enumerable UnaryOperator
+
+
+newtype Disregard a = Disregard {
+    regard :: a
+} deriving (Generic, Show, Functor, Foldable, Traversable, Semigroup, Monoid)
+
+instance Eq (Disregard a) where
+    _ == _ = True
+
+instance Ord (Disregard a) where
+    compare _ _ = EQ
+
+data With a b = With {
+    getWith :: a,
+    unWith  :: b
+} deriving (Generic, Show, Functor, Foldable, Traversable)
+
+deriving via (With (Disregard a) b) instance Eq  b => Eq  (With a b)
+deriving via (With (Disregard a) b) instance Ord b => Ord (With a b)
+
+instance Monoid a => Applicative (With a) where
+    pure = With mempty
+    liftA2 f (With a1 b1) (With a2 b2) = With (a1 ++ a2) (f b1 b2)
+
+newtype NodeWith node a b = NodeWith {
+    getNodeWith :: With a (node a b)
+} deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
+
+-- hmm do we even need this...?
+deriving via Compose (With (a :: *)) ((node :: * -> * -> *) a)
+    instance (Monoid a, Applicative (node a)) =>
+        (Applicative (NodeWith node a)) -- well that's a mouthful
+
+nodeWithout :: NodeWith node a b -> node a b
+nodeWithout = unWith . getNodeWith
+
+mapNode :: (node a b1 -> node a b2) -> NodeWith node a b1 -> NodeWith node a b2
+mapNode f = NodeWith . fmap f . getNodeWith
+
+mapNodeM :: Monad m => (node a b1 -> m (node a b2)) -> NodeWith node a b1 -> m (NodeWith node a b2)
+mapNodeM f = liftM NodeWith . mapM f . getNodeWith
+
+forNodeM :: Monad m => NodeWith node a b1 -> (node a b1 -> m (node a b2)) -> m (NodeWith node a b2)
+forNodeM = flip mapNodeM

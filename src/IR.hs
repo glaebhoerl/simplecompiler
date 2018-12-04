@@ -130,13 +130,13 @@ class Monad m => TranslateM m where
     currentBlock       :: m BlockName
     currentArguments   :: m [Name]
 
-translateTemporary :: TranslateM m => AST.Expression Type.TypedName -> m Value
-translateTemporary = translateExpression Nothing
+translateTemporary :: TranslateM m => NodeWith AST.Expression a Type.TypedName -> m Value
+translateTemporary = translateExpression Nothing . nodeWithout
 
-translateBinding :: TranslateM m => Type.TypedName -> AST.Expression Type.TypedName -> m Value
-translateBinding = translateExpression . Just
+translateBinding :: TranslateM m => Type.TypedName -> NodeWith AST.Expression a Type.TypedName -> m Value
+translateBinding name = translateExpression (Just name) . nodeWithout
 
-translateExpression :: TranslateM m => Maybe Type.TypedName -> AST.Expression Type.TypedName -> m Value
+translateExpression :: TranslateM m => Maybe Type.TypedName -> AST.Expression a Type.TypedName -> m Value
 translateExpression providedName = let emitNamedLet = emitLet providedName in \case
     AST.Named name -> do
         return (Named (translateName name))
@@ -161,7 +161,7 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         name  <- emitNamedLet (UnaryOperator op value)
         return (Named name)
     -- Logical operators are short-circuiting, so we can't just emit them as simple statements, except when the RHS is already a Value.
-    AST.BinaryOperator expr1 (LogicalOperator op) expr2 | (expr2 `isn't` constructor @"NumberLiteral" && expr2 `isn't` constructor @"Named") -> do
+    AST.BinaryOperator expr1 (LogicalOperator op) expr2 | ((nodeWithout expr2) `isn't` constructor @"NumberLiteral" && (nodeWithout expr2) `isn't` constructor @"Named") -> do -- ugh
         value1 <- translateTemporary expr1
         let opName = toLower (showText op)
         -- TODO use the provided name for the arg!
@@ -185,8 +185,8 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         name   <- emitNamedLet (Call (Named (translateName function)) values)
         return (Named name)
 
-translateStatement :: TranslateM m => AST.Statement Type.TypedName -> m ()
-translateStatement = \case
+translateStatement :: TranslateM m => NodeWith AST.Statement a Type.TypedName -> m ()
+translateStatement = (flip (.)) nodeWithout \case -- HACK
     AST.Binding _ name expr -> do
         _ <- translateBinding name expr
         return ()
@@ -210,19 +210,21 @@ translateStatement = \case
                 translateStatements block2
                 return (Jump (Target joinPoint []))
             return (Branch value [Target elseBlock [], Target thenBlock []])
-    AST.Forever block -> do
+    AST.Forever blockWith -> do
+        let block = nodeWithout blockWith
         withContinuation (Left (assert (AST.exitTarget block))) \_ -> do
             foreverBlock <- emitBlock "forever" (BlockType []) do
                 blockBody <- currentBlock
-                translateStatements block
+                translateStatements blockWith
                 return (Jump (Target blockBody []))
             return (Jump (Target foreverBlock []))
-    AST.While expr block -> do
+    AST.While expr blockWith -> do
+        let block = nodeWithout blockWith
         withContinuation (Left (assert (AST.exitTarget block))) \joinPoint -> do
             whileBlock <- emitBlock "while" (BlockType []) do
                 conditionTest <- currentBlock
                 blockBody <- emitBlock "while_body" (BlockType []) do
-                    translateStatements block
+                    translateStatements blockWith
                     return (Jump (Target conditionTest []))
                 value <- translateTemporary expr
                 return (Branch value [Target joinPoint [Literal Unit], Target blockBody []])
@@ -235,8 +237,8 @@ translateStatement = \case
     AST.Expression expr -> do
         unused (translateTemporary expr)
 
-translateStatements :: TranslateM m => AST.Block Type.TypedName -> m ()
-translateStatements = mapM_ translateStatement . AST.statements
+translateStatements :: TranslateM m => NodeWith AST.Block a Type.TypedName -> m ()
+translateStatements = mapM_ translateStatement . AST.statements .  nodeWithout
 
 
 ---------------------------------------------------------------------------------------------------- TRANSLATION BACKEND
@@ -256,12 +258,12 @@ translateBlockName (Name.NameWith name ty) = Name (ASTName name) (translatedType
         Type.SmallType ty -> BlockType [ty]
         Type.Type         -> bug "Use of typename as exit target"
 
-translateFunction :: AST.Function Type.TypedName -> Function
+translateFunction :: AST.Function a Type.TypedName -> Function
 translateFunction AST.Function { AST.functionName, AST.arguments, AST.body = functionBody } = result where
     result        = evalState initialState (runTranslate translateImpl)
     initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" rootBlockArgs [] Nothing Nothing }
-    rootBlockArgs = map (translateName . AST.argumentName) arguments
-    exitTarget    = assert (AST.exitTarget functionBody)
+    rootBlockArgs = map (translateName . AST.argumentName . nodeWithout) arguments
+    exitTarget    = (assert . AST.exitTarget . nodeWithout) functionBody
     returnBlock   = translateBlockName exitTarget
     translateImpl = do
         -- this means a somewhat-redundant additional block will be emitted as the body, but, it works

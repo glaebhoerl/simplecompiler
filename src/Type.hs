@@ -1,4 +1,4 @@
-module Type (LargeType (..), Type (..), TypedName, Error (..), TypeMismatch (..), checkTypes, typeOf, ValidationError (..), validate) where
+module Type (LargeType (..), Type (..), TypedName, Error (..), TypeMismatch (..), checkTypes, typeOf, ValidationError (..), validateTypes) where
 
 import MyPrelude
 
@@ -30,7 +30,7 @@ data Type
 
 type TypedName = NameWith LargeType
 
-typeOf :: AST.Expression TypedName -> Type
+typeOf :: AST.Expression a TypedName -> Type
 typeOf = \case
     AST.Named name -> case Name.info name of
         SmallType smallType ->
@@ -110,8 +110,8 @@ data Error
 
 data TypeMismatch = TypeMismatch {
     expectedType :: Type,
-    actualType   :: Type,
-    expression   :: AST.Expression ResolvedName
+    actualType   :: Type
+    --expression   :: AST.Expression ResolvedName -- I think instead of this, just the location is enough?
 } deriving (Generic, Show)
 
 class Monad m => TypeCheckM m where
@@ -120,101 +120,113 @@ class Monad m => TypeCheckM m where
     nameAsType  :: ResolvedName         -> m Type
     reportError :: Error                -> m a
 
-inferExpression :: TypeCheckM m => AST.Expression ResolvedName -> m Type
-inferExpression = \case
-    AST.Named name -> do
-        lookupType name
-    AST.NumberLiteral int -> do
-        when (int > fromIntegral (maxBound :: Int64)) do
-            reportError LiteralOutOfRange
-        return Int
-    AST.TextLiteral _ -> do
-        return Text
-    AST.UnaryOperator op expr -> do
-        let type' = case op of
-                Not    -> Bool
-                Negate -> Int
-        checkExpression type' expr
-        return type'
-    AST.BinaryOperator expr1 op expr2 -> do
-        let (inType, outType) = case op of
-                ArithmeticOperator _ -> (Int,  Int)
-                ComparisonOperator _ -> (Int,  Bool)
-                LogicalOperator    _ -> (Bool, Bool)
-        checkExpression inType expr1
-        checkExpression inType expr2
-        return outType
-    AST.Call function arguments -> do
-        functionType <- lookupType function
-        case functionType of
-            Function argumentTypes returnType -> do
-                when (length argumentTypes != length arguments) do
-                    reportError WrongNumberOfArguments
-                zipWithM checkExpression argumentTypes arguments
-                return returnType
-            _ -> do
-                reportError CallOfNonFunction
+class CheckTypeOf node where
+    inferType :: TypeCheckM m => node ResolvedName -> m Type
+    checkUnit :: TypeCheckM m => node ResolvedName -> m ()
+    inferType node = do
+        checkUnit node
+        return Unit
+    checkUnit = checkType Unit
 
-checkExpression :: TypeCheckM m => Type -> AST.Expression ResolvedName -> m ()
-checkExpression expected expr = do
-    inferred <- inferExpression expr
-    when (expected != inferred) do
-        (reportError . TypeError) TypeMismatch {
-            expectedType = expected,
-            actualType   = inferred,
-            expression   = expr
-        }
+checkType :: (TypeCheckM m, CheckTypeOf node) => Type -> node ResolvedName -> m ()
+checkType expectedType node = do
+    actualType <- inferType node
+    when (expectedType != actualType) do
+        reportError (TypeError TypeMismatch { expectedType, actualType })
 
-checkStatement :: TypeCheckM m => AST.Statement ResolvedName -> m ()
-checkStatement = \case
-    AST.Binding _ name expr -> do
-        inferredType <- inferExpression expr
-        recordType inferredType name
-    AST.Assign name expr -> do
-        when (Name.info name != AST.Var) do
-            reportError AssignToLet
-        nameType <- lookupType name
-        checkExpression nameType expr
-    AST.IfThen expr block -> do
-        checkExpression Bool expr
-        checkBlock      Unit block
-    AST.IfThenElse expr block1 block2 -> do
-        checkExpression Bool expr
-        checkBlock      Unit block1
-        checkBlock      Unit block2
-    AST.Forever block -> do
-        checkBlock      Unit block
-    AST.While expr block -> do
-        checkExpression Bool expr
-        checkBlock      Unit block
-    AST.Return target maybeExpr -> do
-        returnType <- lookupType target
-        mapM_ (checkExpression returnType) maybeExpr
-        when (maybeExpr == Nothing) do
-            checkExpression Unit (AST.Named target) -- HACK
-    AST.Break target -> do
-        breakType <- lookupType target
-        assertEqM breakType Unit
-    AST.Expression expr -> do
-        unused (inferExpression expr)
+instance CheckTypeOf (AST.Expression a) where
+    inferType = \case
+        AST.Named name -> do
+            lookupType name
+        AST.NumberLiteral int -> do
+            when (int > fromIntegral (maxBound :: Int64)) do
+                reportError LiteralOutOfRange
+            return Int
+        AST.TextLiteral _ -> do
+            return Text
+        AST.UnaryOperator op expr -> do
+            let type' = case op of
+                    Not    -> Bool
+                    Negate -> Int
+            checkType type' expr
+            return type'
+        AST.BinaryOperator expr1 op expr2 -> do
+            let (inType, outType) = case op of
+                    ArithmeticOperator _ -> (Int,  Int)
+                    ComparisonOperator _ -> (Int,  Bool)
+                    LogicalOperator    _ -> (Bool, Bool)
+            checkType inType expr1
+            checkType inType expr2
+            return outType
+        AST.Call function arguments -> do
+            functionType <- lookupType function
+            case functionType of
+                Function argumentTypes returnType -> do
+                    when (length argumentTypes != length arguments) do
+                        reportError WrongNumberOfArguments
+                    zipWithM checkType argumentTypes arguments
+                    return returnType
+                _ -> do
+                    reportError CallOfNonFunction
 
-checkBlock :: TypeCheckM m => Type -> AST.Block ResolvedName -> m ()
-checkBlock exitTargetType AST.Block { AST.exitTarget, AST.statements } = do
-    mapM_ (recordType exitTargetType) exitTarget
-    mapM_ checkStatement statements
+instance CheckTypeOf (AST.Statement a) where
+    checkUnit = \case
+        AST.Binding _ name expr -> do
+            inferredType <- inferType expr
+            recordType inferredType name
+        AST.Assign name expr -> do
+            when (Name.info name != AST.Var) do
+                reportError AssignToLet
+            nameType <- lookupType name
+            checkType nameType expr
+        AST.IfThen expr block -> do
+            checkType Bool expr
+            checkUnit block
+        AST.IfThenElse expr block1 block2 -> do
+            checkType Bool expr
+            checkUnit block1
+            checkUnit block2
+        AST.Forever block -> do
+            checkBlock Unit block
+        AST.While expr block -> do
+            checkType Bool expr
+            checkBlock Unit block
+        AST.Return target maybeExpr -> do
+            returnType <- lookupType target
+            mapM_ (checkType returnType) maybeExpr
+            when (maybeExpr == Nothing) do
+                checkType Unit (AST.Named target) -- HACK
+        AST.Break target -> do
+            breakType <- lookupType target
+            assertEqM breakType Unit
+        AST.Expression expr -> do
+            unused (inferType expr)
 
-checkFunction :: TypeCheckM m => AST.Function ResolvedName -> m ()
-checkFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
-    argumentTypes <- forM arguments \AST.Argument { AST.argumentName, AST.argumentType } -> do
-        resolvedType <- nameAsType argumentType
-        recordType resolvedType argumentName
-        return resolvedType
-    maybeReturnType <- mapM nameAsType returns
-    let returnType = fromMaybe Unit maybeReturnType
-    recordType (Function argumentTypes returnType) functionName
-    checkBlock returnType body
-    when (returnType != Unit && not (definitelyReturns (controlFlow body))) do
-        reportError FunctionWithoutReturn
+instance CheckTypeOf (AST.Block a) where
+    checkUnit AST.Block { AST.statements } = do
+        mapM_ checkUnit statements
+
+checkBlock :: TypeCheckM m => Type -> NodeWith AST.Block a ResolvedName -> m ()
+checkBlock exitTargetType block = do
+    recordType exitTargetType (assert (AST.exitTarget (nodeWithout block)))
+    checkUnit block
+
+instance CheckTypeOf (AST.Function a) where
+    checkUnit AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
+        argumentTypes <- forM arguments \argument -> do
+            let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
+            resolvedType <- nameAsType argumentType
+            recordType resolvedType argumentName
+            return resolvedType
+        maybeReturnType <- mapM nameAsType returns
+        let returnType = fromMaybe Unit maybeReturnType
+        recordType (Function argumentTypes returnType) functionName
+        checkBlock returnType body
+        when (returnType != Unit && not (definitelyReturns (controlFlow body))) do
+            reportError FunctionWithoutReturn
+
+instance CheckTypeOf (node a) => CheckTypeOf (NodeWith node a) where
+    inferType = inferType . nodeWithout
 
 data ControlFlow = ControlFlow {
     definitelyReturns :: Bool, -- guaranteed divergence also counts as "returning"
@@ -229,9 +241,14 @@ instance Semigroup ControlFlow where
 instance Monoid ControlFlow where
     mempty = ControlFlow False False
 
-controlFlow :: Eq name => AST.Block name -> ControlFlow
-controlFlow = mconcat . map statementControlFlow . AST.statements where
-    statementControlFlow = \case
+class CheckControlFlow node where
+    controlFlow :: Eq name => node name -> ControlFlow
+
+instance CheckControlFlow (AST.Block a) where
+    controlFlow = mconcat . map controlFlow . AST.statements
+
+instance CheckControlFlow (AST.Statement a) where
+    controlFlow = \case
         AST.Return {} ->
             ControlFlow True  False
         AST.Break {} ->
@@ -250,14 +267,17 @@ controlFlow = mconcat . map statementControlFlow . AST.statements where
             ControlFlow (returns1 && returns2) (breaks1 || breaks2) where
                 ControlFlow returns1 breaks1 = controlFlow block1
                 ControlFlow returns2 breaks2 = controlFlow block2
-        AST.Forever block ->
+        AST.Forever blockWith ->
             ControlFlow (noBreaks || doesReturn) False where
                 -- we can check whether there is a `break` by whether the `exitTarget` is ever referred to
                 -- (we make use of the Foldable instances for the AST)
                 -- we have to make sure to leave out the `exitTarget` itself!
                 noBreaks   = not (any (== (assert (AST.exitTarget block))) (block { AST.exitTarget = Nothing }))
                 doesReturn = definitelyReturns (controlFlow block)
+                block      = nodeWithout blockWith
 
+instance CheckControlFlow (node a) => CheckControlFlow (NodeWith node a) where
+    controlFlow = controlFlow . nodeWithout
 
 
 ------------------------------------------------------------------------ typechecker backend
@@ -266,9 +286,9 @@ newtype TypeCheck a = TypeCheck {
     runTypeCheck :: StateT (Map Name Type) (Except Error) a
 } deriving (Functor, Applicative, Monad, MonadState (Map Name Type), MonadError Error)
 
-checkTypes :: AST ResolvedName -> Either Error (AST TypedName)
+checkTypes :: AST a ResolvedName -> Either Error (AST a TypedName)
 checkTypes ast = do
-    nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkFunction) ast
+    nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkUnit) ast
     let makeNameTyped (NameWith name _) = NameWith name (assert (oneOf [tryLookup, tryBuiltin])) where
             tryLookup  = fmap SmallType     (Map.lookup name nameToTypeMap)
             tryBuiltin = fmap typeOfBuiltin (match @"BuiltinName" name)
@@ -314,11 +334,16 @@ builtinAsType = \case
 ------------------------------------------------------------------------ validation
 
 -- TODO check presence/absence of exit targets (or in Name.validate??)
-data ValidationError
-    = ExpectedType LargeType (AST.Expression TypedName)
-    | ExpectedFunction (AST.Expression TypedName)
-    | ExpectedArgumentCount Int [AST.Expression TypedName]
+data ValidationError a
+    = ExpectedType LargeType (AST.Expression a TypedName)
+    | ExpectedFunction (AST.Expression a TypedName)
+    | ExpectedArgumentCount Int [NodeWith AST.Expression a TypedName]
     deriving (Generic, Show)
+
+type ValidateM a = Except (ValidationError a)
+
+class Validate node where
+    validate :: node a TypedName -> ValidateM a ()
 
 -- This checks that:
 --  * The AST is locally well-typed at each point, based on the types stored within `Name`s.
@@ -326,49 +351,58 @@ data ValidationError
 -- This does NOT check that:
 --  * Names are actually in scope, and the info stored in `Name`s is consistent. Use `Name.validate` for that!
 --  * Literals are within range, and assignments match their binding types.
-validate :: AST TypedName -> Either ValidationError ()
-validate = runExcept . mapM_ validateFunction where
-    validateFunction AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
+validateTypes :: AST a TypedName -> Either (ValidationError a) ()
+validateTypes = runExcept . mapM_ validate
+
+instance Validate AST.Function where
+    validate AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         let getNameAsType = assert . builtinAsType . assert . match @"BuiltinName" . Name.name -- not very nice... :/
-        forM_ arguments \AST.Argument { AST.argumentName, AST.argumentType } -> do
+            validateType typeName = do
+                when (Name.info typeName != Type) do
+                    throwError (ExpectedType Type (AST.Named typeName))
+        forM_ arguments \argument -> do
+            let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
             validateType argumentType
-            check (getNameAsType argumentType) (AST.Named argumentName)
+            checkName (getNameAsType argumentType) argumentName
         mapM_ validateType returns
         let functionType = Function argTypes returnType
-            argTypes     = map (typeOf . AST.Named . AST.argumentName) arguments
+            argTypes     = map (typeOf . AST.Named . AST.argumentName . nodeWithout) arguments
             returnType   = maybe Unit getNameAsType returns
-        check functionType (AST.Named functionName)
-        mapM_ (check returnType . AST.Named) (AST.exitTarget body) -- TODO check that it's Just!
-        validateBlock body
-    validateType typeName = do
-        when (Name.info typeName != Type) do
-            throwError (ExpectedType Type (AST.Named typeName))
-    validateBlock = mapM_ validateStatement . AST.statements
-    validateStatement = \case
+        checkName functionType functionName
+        mapM_ (checkName returnType) ((AST.exitTarget . nodeWithout) body) -- TODO check that it's Just!
+        validate body
+
+instance Validate AST.Block where
+    validate = mapM_ validate . AST.statements
+
+instance Validate AST.Statement where
+    validate = \case
         AST.Binding _ (NameWith _ ty) expr -> do
             checkLarge ty expr
         AST.Assign (NameWith _ ty) expr -> do
             checkLarge ty expr
         AST.IfThen expr body -> do
             check Bool expr
-            validateBlock body
+            validate body
         AST.IfThenElse expr body1 body2 -> do
             check Bool expr
-            mapM_ validateBlock [body1, body2]
+            mapM_ validate [body1, body2]
         AST.Forever body -> do
-            validateBlock body
+            validate body
         AST.While expr body -> do
             check Bool expr
-            validateBlock body
+            validate body
         AST.Return target maybeExpr -> do
             mapM_ (check (typeOf (AST.Named target))) maybeExpr
             when (maybeExpr == Nothing) do
-                check Unit (AST.Named target) -- HACK
+                checkName Unit target
         AST.Break target -> do
-            check Unit (AST.Named target)
+            checkName Unit target
         AST.Expression expr -> do
-            validateExpression expr
-    validateExpression = \case
+            validate expr
+
+instance Validate AST.Expression where
+    validate = \case
         AST.UnaryOperator op expr -> do
             check opExpectsType expr where
                 opExpectsType = case op of
@@ -394,8 +428,21 @@ validate = runExcept . mapM_ validateFunction where
                     zipWithM_ check argTypes args
                 _ -> do
                     throwError (ExpectedFunction (AST.Named function))
-    check = checkLarge . SmallType
-    checkLarge expectedType expr = do
-        when (SmallType (typeOf expr) != expectedType) do -- FIXME maybe `validate` shouldn't panic if it sees a `Type` in the wrong place, as `typeOf` does!!
-            throwError (ExpectedType expectedType expr)
-        validateExpression expr
+
+instance Validate node => Validate (NodeWith node) where
+    validate = validate . nodeWithout
+
+checkName :: Type -> TypedName -> ValidateM a ()
+checkName ty name = checkImpl (SmallType ty) (AST.Named name)
+
+check :: Type -> NodeWith AST.Expression a TypedName -> ValidateM a ()
+check = checkLarge . SmallType
+
+checkLarge :: LargeType -> NodeWith AST.Expression a TypedName -> ValidateM a ()
+checkLarge expectedType = checkImpl expectedType . nodeWithout
+
+checkImpl :: LargeType -> AST.Expression a TypedName -> ValidateM a ()
+checkImpl expectedType expr = do
+    when (SmallType (typeOf expr) != expectedType) do -- FIXME maybe `validate` shouldn't panic if it sees a `Type` in the wrong place, as `typeOf` does!!
+        throwError (ExpectedType expectedType expr)
+    validate expr

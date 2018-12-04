@@ -1,14 +1,9 @@
-{-# LANGUAGE RecursiveDo, QuantifiedConstraints #-} -- needed for Earley
+{-# LANGUAGE RecursiveDo #-} -- needed for Earley
 
 module AST (Expression (..), BindingType (..), Statement (..), Block (..), Argument (..), Function (..), AST, Error (..), parse, RenderName (..)) where
 
 import MyPrelude
 
-import Data.Functor.Compose
-import Data.Functor.Classes (Eq1, Show1)
-import GHC.Exts (Constraint)
-
-import qualified Data.Loc    as Loc
 import qualified Text.Earley as E
 
 import qualified Pretty as P
@@ -17,126 +12,86 @@ import qualified Token  as T
 import Pretty (Render, render)
 
 
-
 ----------------------------------------------------------------------------- types
 
-type ComposedNode f node  = Compose f (node f)
-
-type ComposedExpression f = ComposedNode f Expression
-type ComposedStatement  f = ComposedNode f Statement
-type ComposedBlock      f = ComposedNode f Block
-type ComposedArgument   f = ComposedNode f Argument
-type ComposedFunction   f = ComposedNode f Function
-
-data Expression f name
+data Expression a name
     = Named
         name
     | Call
         name
-        [ComposedExpression f name]
+        [NodeWith Expression a name]
     | NumberLiteral
         Integer
     | TextLiteral
         Text
     | UnaryOperator
         UnaryOperator
-        (ComposedExpression f name)
+        (NodeWith Expression a name)
     | BinaryOperator
-        (ComposedExpression f name)
+        (NodeWith Expression a name)
         BinaryOperator
-        (ComposedExpression f name)
-    deriving (Generic, Functor, Foldable, Traversable)
+        (NodeWith Expression a name)
+    deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data BindingType
     = Let
     | Var
     deriving (Generic, Eq, Show)
 
-data Statement f name
+data Statement a name
     = Expression
-        (ComposedExpression f name)
+        (NodeWith Expression a name)
     | Binding
         BindingType
         name
-        (ComposedExpression f name)
+        (NodeWith Expression a name)
     | Assign
         name
-        (ComposedExpression f name)
+        (NodeWith Expression a name)
     | IfThen
-        (ComposedExpression f name)
-        (ComposedBlock      f name)
+        (NodeWith Expression a name)
+        (NodeWith Block      a name)
     | IfThenElse
-        (ComposedExpression f name)
-        (ComposedBlock      f name)
-        (ComposedBlock      f name)
+        (NodeWith Expression a name)
+        (NodeWith Block      a name)
+        (NodeWith Block      a name)
     | Forever
-        (ComposedBlock      f name)
+        (NodeWith Block      a name)
     | While
-        (ComposedExpression f name)
-        (ComposedBlock      f name)
+        (NodeWith Expression a name)
+        (NodeWith Block      a name)
     | Return
         name -- return and break refer to the `exitTarget` in `Block`; these are "phantom names", not present in the source code
-        (Maybe (ComposedExpression f name))
+        (Maybe (NodeWith Expression a name))
     | Break
         name -- see above
-    deriving (Generic, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-data Block f name = Block {
+data Block a name = Block {
     exitTarget :: Maybe name, -- "phantom", see above
-    statements :: [ComposedStatement f name]
-} deriving (Generic, Functor, Foldable, Traversable)
+    statements :: [NodeWith Statement a name]
+} deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-data Argument f name = Argument {
-    argumentName :: name, -- TODO maybe use `f name` here
+data Argument a name = Argument {
+    argumentName :: name, -- TODO `With a name`?
     argumentType :: name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-data Function f name = Function {
+data Function a name = Function {
     functionName :: name,
-    arguments    :: [ComposedArgument f name],
-    returns      :: Maybe name, -- TODO ComposedNode Identity f?
-    body         :: ComposedBlock f name
-} deriving (Generic, Functor, Foldable, Traversable)
-
-type Forall c f = (forall a. c a => c (f a) :: Constraint)
-
-type EqF   f = Forall Eq   f
-type ShowF f = Forall Show f
-
-deriving instance (Eq1   f, Eq   a) => Eq   (Expression f a)
-deriving instance (Eq1   f, Eq   a) => Eq   (Statement  f a)
-deriving instance (Eq1   f, Eq   a) => Eq   (Block      f a)
-deriving instance (Eq1   f, Eq   a) => Eq   (Function   f a)
-deriving instance (Show1 f, Show a) => Show (Expression f a)
-deriving instance (Show1 f, Show a) => Show (Statement  f a)
-deriving instance (Show1 f, Show a) => Show (Block      f a)
-deriving instance (Show1 f, Show a) => Show (Function   f a)
-
-
-data Located a = At {
-    location :: Loc.SrcLoc,
-    retrieve :: a
+    arguments    :: [NodeWith Argument a name],
+    returns      :: Maybe name, -- TODO `With a name`?
+    body         :: NodeWith Block a name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-instance Applicative Located where
-    pure = At mempty
-    liftA2 f (At l1 a1) (At l2 a2) = At (l1 ++ l2) (f a1 a2)
-
-type LocatedExpression = ComposedExpression Located
-type LocatedStatement  = ComposedStatement  Located
-type LocatedBlock      = ComposedBlock      Located
-type LocatedArgument   = ComposedArgument   Located
-type LocatedFunction   = ComposedFunction   Located
+type Located node = NodeWith node Loc
 
 
 ----------------------------------------------------------------------------- parsing
 
 type Expected         = Text
-type Prod      r      = Compose (E.Prod r Expected (Located T.Token)) Located
-type Grammar   r node = E.Grammar r (Prod r (ComposedNode Located node Text))
-
-recompose :: Functor f => Compose f g (h a) -> f (Compose g h a)
-recompose (Compose x) = fmap Compose x
+type Prod      r      = Compose (E.Prod r Expected (With Loc T.Token)) (With Loc)
+type Grammar   r node = E.Grammar r (Prod r (Located node Text))
 
 token :: T.Token -> Prod r ()
 token = unused . Compose . E.token . pure
@@ -145,7 +100,7 @@ keyword :: T.Keyword -> Prod r ()
 keyword = token . T.Keyword
 
 terminal :: (T.Token -> Maybe a) -> Prod r a
-terminal f = Compose (E.terminal (\(At loc a) -> fmap (At loc) (f a)))
+terminal f = Compose (E.terminal (\(With loc a) -> fmap (With loc) (f a)))
 
 tokenConstructor :: forall name inner r. AsConstructor' name T.Token inner => Prod r inner
 tokenConstructor = terminal (match @name)
@@ -167,14 +122,14 @@ followedBy = (*>)
 -- The explanation is that Applicative only handles combining the sublocations into the location of the final result --
 --   but we don't just want the location of the whole tree, we also want the locations of all the sub-nodes!
 -- So this takes a snapshot of the location for the subnode, and also lets `Applicative` go on combining it into the location of the parent node.
-located :: Prod r (node Located Text) -> Prod r (ComposedNode Located node Text)
+located :: Prod r (node Loc Text) -> Prod r (Located node Text)
 located = Compose . fmap dupLocated . getCompose where
-    dupLocated node = At (location node) (Compose node)
+    dupLocated node = With (getWith node) (NodeWith node)
 
-nodeRule :: Prod r (node Located Text) -> Grammar r node
+nodeRule :: Prod r (node Loc Text) -> Grammar r node
 nodeRule = fmap Compose . E.rule . getCompose . located
 
-ruleCases :: [Prod r (node Located Text)] -> Grammar r node
+ruleCases :: [Prod r (node Loc Text)] -> Grammar r node
 ruleCases cases = nodeRule (oneOf cases)
 
 -- from tightest to loosest; operators within a group have equal precedence
@@ -190,12 +145,12 @@ precedenceGroups = assert (justIf isWellFormed listOfGroups) where
          map LogicalOperator    [And],
          map LogicalOperator    [Or]]
 
-data BinaryOperationList f name
-    = SingleExpression (ComposedExpression f name)
-    | BinaryOperation  (ComposedExpression f name) BinaryOperator (ComposedNode Located BinaryOperationList name)
+data BinaryOperationList a name
+    = SingleExpression (NodeWith Expression a name)
+    | BinaryOperation  (NodeWith Expression a name) BinaryOperator (Located BinaryOperationList name)
 
-resolvePrecedences :: ComposedNode Located BinaryOperationList Text -> LocatedExpression Text
-resolvePrecedences binaryOperationList = finalResult where
+resolvePrecedences :: Located BinaryOperationList Text -> Located Expression Text
+resolvePrecedences binaryOperationList = todo {-finalResult where
     finalResult = case allPrecedencesResolved of
         SingleExpression expr -> expr
         list                  -> bug ("Unresolved binary operator precedence: " ++ prettyShow list)
@@ -206,7 +161,7 @@ resolvePrecedences binaryOperationList = finalResult where
             | otherwise                -> BinaryOperation expr1 op1 (resolveOnePrecedenceLevel (BinaryOperation expr2 op2 rest) precedenceGroup)
         BinaryOperation expr1 op (SingleExpression expr2)
             | elem op  precedenceGroup -> SingleExpression (BinaryOperator expr1 op expr2)
-        other -> other
+        other -> other-}
 
 expressionGrammar :: Grammar r Expression
 expressionGrammar = mdo
@@ -214,9 +169,9 @@ expressionGrammar = mdo
                            liftA1 NumberLiteral (tokenConstructor @"Number"),
                            liftA1 TextLiteral   (tokenConstructor @"Text"),
                            liftA2 Call          (tokenConstructor @"Name") (bracketed T.Round (separatedBy T.Comma expression)),
-                           liftA1 (retrieve . getCompose) (bracketed T.Round expression)]
+                           liftA1 nodeWithout (bracketed T.Round expression)]
     unary    <- ruleCases [liftA2 UnaryOperator (tokenConstructor @"UnaryOperator") atom,
-                           liftA1 (retrieve . getCompose) atom] -- TODO is there any nicer way to do this
+                           liftA1 nodeWithout atom] -- TODO is there any nicer way to do this
     binaries <- ruleCases [liftA3 BinaryOperation  unary (tokenConstructor @"BinaryOperator") binaries,
                            liftA1 SingleExpression unary]
     let expression = liftA1 resolvePrecedences binaries
@@ -297,19 +252,18 @@ functionGrammar = do
         return Function { functionName, arguments, returns, body }
 
 
-type AST name = [LocatedFunction name]
+type AST a name = [NodeWith Function a name]
 
 data Error
-    = Invalid Int [Expected] [Located T.Token]
-    | Ambiguous [AST Text]
+    = Invalid Int [Expected] [With Loc T.Token]
+    | Ambiguous [AST Loc Text]
     deriving (Generic)
 
 deriving instance Show Error
 
-parse :: [Loc.L T.Token] -> Either Error (AST Text)
-parse = checkResult . E.fullParses parser . map convertLocation where
-    convertLocation (Loc.L l a) = At (Loc.SrcLoc l) a -- TODO use `Located` everywhere instead
-    parser = E.parser (liftM oneOrMore (fmap (fmap retrieve . getCompose) functionGrammar))
+parse :: [With Loc T.Token] -> Either Error (AST Loc Text)
+parse = checkResult . E.fullParses parser where
+    parser = E.parser (liftM oneOrMore (fmap (fmap unWith . getCompose) functionGrammar))
     checkResult = \case
         ([], E.Report a b c) ->
             Left (Invalid a b c)
@@ -324,15 +278,7 @@ parse = checkResult . E.fullParses parser . map convertLocation where
 
 ----------------------------------------------------------------------------- pretty-printing
 
-type RenderF f = Forall Render f
-
-instance Render a => Render (Located a) where
-    render = render . retrieve
-
-instance Render (f (g a)) => Render (Compose f g a) where
-    render = render . getCompose
-
-renderBlock :: (RenderF f, RenderName name) => ComposedBlock f name -> P.Document
+renderBlock :: RenderName name => NodeWith Block a name -> P.Document
 renderBlock block = P.braces (P.nest 4 (P.hardline ++ render block) ++ P.hardline)
 
 class RenderName name where
@@ -341,7 +287,7 @@ class RenderName name where
 instance RenderName Text where
     renderName defOrUse name = P.note (P.Identifier (P.IdentInfo name defOrUse P.Unknown False)) (P.pretty name)
 
-instance (RenderF f, RenderName name) => Render (Expression f name) where
+instance RenderName name => Render (Expression a name) where
     render = \case
         Named          name           -> renderName P.Use name
         Call           name args      -> renderName P.Use name ++ P.parens (P.hsep (P.punctuate "," (map render args)))
@@ -355,7 +301,7 @@ instance Render BindingType where
         Let -> "let"
         Var -> "var"
 
-instance (RenderF f, RenderName name) => Render (Statement f name) where
+instance RenderName name => Render (Statement a name) where
     render = \case
         Binding    btype name expr    -> render btype ++ " " ++ renderName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ render expr ++ P.semicolon
         Assign     name expr          -> renderName P.Use name ++ " " ++ P.assignEquals ++ " " ++ render expr ++ P.semicolon
@@ -367,18 +313,18 @@ instance (RenderF f, RenderName name) => Render (Statement f name) where
         Break      _                  -> P.keyword "break"   ++ P.semicolon
         Expression expr               -> render expr       ++ P.semicolon
 
-instance (RenderF f, RenderName name) => Render (Block f name) where
+instance RenderName name => Render (Block a name) where
     render Block { statements } = mconcat (P.punctuate P.hardline (map render statements))
 
-instance (RenderF f, RenderName name) => Render (Argument f name) where
+instance RenderName name => Render (Argument a name) where
     render Argument { argumentName, argumentType } = renderName P.Definition argumentName ++ P.colon ++ " " ++ renderName P.Use argumentType
 
-instance (RenderF f, RenderName name) => Render (Function f name) where
+instance RenderName name => Render (Function a name) where
     render Function { functionName, arguments, returns, body } = renderedHead ++ renderedArguments ++ renderedReturns ++ renderedBody where
         renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
         renderedArguments = P.parens (P.hsep (P.punctuate "," (map render arguments)))
         renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ renderName P.Use returnType) returns
         renderedBody      = P.hardline ++ renderBlock body
 
-instance RenderName name => Render (AST name) where
+instance RenderName name => Render (AST a name) where
     render = mconcat . P.punctuate P.hardline . map render

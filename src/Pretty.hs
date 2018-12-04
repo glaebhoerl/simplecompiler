@@ -174,6 +174,12 @@ instance Render ByteString where
     render = P.pretty . byteStringToText
     outputWithStyle _ = Data.ByteString.hPutStr
 
+instance Render b => Render (With a b) where
+    render = render . unWith
+
+instance Render (node a b) => Render (NodeWith node a b) where
+    render = render . nodeWithout
+
 ansiStyle :: Style -> PT.AnsiStyle
 ansiStyle Style { color, isDull, isBold, isItalic, isUnderlined } = style where
     style     = maybe mempty (fromColor . mapColor) color ++ fontStyle

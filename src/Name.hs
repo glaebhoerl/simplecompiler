@@ -1,4 +1,4 @@
-module Name (BuiltinName (..), LocalName (..), Name (..), qualifiedName, unqualifiedName, NameWith (..), Path (..), ResolvedName, Error (..), resolveNames, ValidationError (..), validate) where
+module Name (BuiltinName (..), LocalName (..), Name (..), qualifiedName, unqualifiedName, NameWith (..), Path (..), ResolvedName, Error (..), resolveNames, ValidationError (..), validateNames) where
 
 import MyPrelude
 
@@ -95,26 +95,28 @@ class Monad m => NameResolveM m where
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node Text -> m (node ResolvedName)
 
-instance ResolveNamesIn AST.Function where
+instance ResolveNamesIn (AST.Function a) where
     resolveNamesIn AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         -- the argument types and return type are in global scope, must be resolved before entering any scope
-        argumentTypes <- forM arguments \AST.Argument { AST.argumentType } -> do
-            lookupName argumentType
+        argumentTypes <- forM arguments \argument -> do
+            (lookupName . AST.argumentType . nodeWithout) argument
         resolvedReturns <- mapM lookupName returns
         -- the argument names are in scope for the body, and may also be shadowed by it
-        (argumentNames, resolvedBody) <- enterScope do
-            argumentNames <- forM arguments \AST.Argument { AST.argumentName } -> do
-                bindName AST.Let argumentName
+        (resolvedArguments, resolvedBody) <- enterScope do
+            resolvedArguments <- forM (zip argumentTypes arguments) \(resolvedType, argument) -> do
+                forNodeM argument \AST.Argument { AST.argumentName } -> do
+                    resolvedName <- bindName AST.Let argumentName
+                    return (AST.Argument resolvedName resolvedType)
             resolvedBody <- resolveNamesIn body
-            return (argumentNames, resolvedBody)
+            return (resolvedArguments, resolvedBody)
         return AST.Function {
             AST.functionName = NameWith { name = FunctionName functionName, info = AST.Let }, -- the function itself is bound in `resolveFunction`
-            AST.arguments    = zipWith AST.Argument argumentNames argumentTypes,
+            AST.arguments    = resolvedArguments,
             AST.returns      = resolvedReturns,
             AST.body         = resolvedBody
         }
 
-instance ResolveNamesIn AST.Block where
+instance ResolveNamesIn (AST.Block a) where
     resolveNamesIn AST.Block { AST.exitTarget, AST.statements } = enterScope do
         resolvedTarget     <- mapM (bindName AST.Let) exitTarget
         resolvedStatements <- mapM resolveNamesIn statements
@@ -124,7 +126,7 @@ instance ResolveNamesIn AST.Block where
 -- except for `bindName` and `enterScope` for blocks...
 -- we could solve `bindName` by having a binding vs. reference sum type
 -- but `enterScope` is flummoxing
-instance ResolveNamesIn AST.Statement where
+instance ResolveNamesIn (AST.Statement a) where
     resolveNamesIn = \case
         AST.Binding btype name expr -> do
             -- resolve the expression BEFORE binding the name:
@@ -151,8 +153,11 @@ instance ResolveNamesIn AST.Statement where
         ast -> do
             mapM lookupName ast
 
-instance ResolveNamesIn AST.Expression where
+instance ResolveNamesIn (AST.Expression a) where
     resolveNamesIn = mapM lookupName
+
+instance ResolveNamesIn (node a) => ResolveNamesIn (NodeWith node a) where
+    resolveNamesIn = mapNodeM resolveNamesIn
 
 
 
@@ -167,17 +172,19 @@ newtype NameResolve a = NameResolve {
     runNameResolve :: StateT Context (Except Error) a
 } deriving (Functor, Applicative, Monad, MonadState Context, MonadError Error)
 
-resolveNames :: AST Text -> Either Error (AST ResolvedName)
+-- TODO return `With a Error` for location info
+resolveNames :: AST a Text -> Either Error (AST a ResolvedName)
 resolveNames = runExcept . evalStateT (Context Set.empty "" []) . runNameResolve . mapM resolveFunction
 
-resolveFunction :: AST.Function Text -> NameResolve (AST.Function ResolvedName)
-resolveFunction function@AST.Function { AST.functionName } = do
-    doModifyState \Context { functions, locals } -> do
-        assertEqM locals []
-        when (Set.member functionName functions) do
-            throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
-        return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals }
-    resolveNamesIn function
+resolveFunction :: NodeWith AST.Function a Text -> NameResolve (NodeWith AST.Function a ResolvedName)
+resolveFunction = mapNodeM impl where
+    impl function@AST.Function { AST.functionName } = do
+        doModifyState \Context { functions, locals } -> do
+            assertEqM locals []
+            when (Set.member functionName functions) do
+                throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
+            return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals }
+        resolveNamesIn function
 
 -- the stack of scopes we are currently inside
 -- fst: how many sub-scopes within that scope we have visited so far
@@ -252,77 +259,98 @@ data ValidationError info
 -- This does NOT check that:
 --  * The `path` component of the name is correct. This is regarded as an implementation detail, subject to change.
 --  * The binding types are stored correctly. This is an unfortunate limitation of being polymorphic over the `info` type.
-validate :: Eq info => AST (NameWith info) -> Either (ValidationError info) ()
-validate = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validateFunction where
+validateNames :: Eq info => AST a (NameWith info) -> Either (ValidationError info) ()
+validateNames = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validate where
     builtinNames = Map.fromList (zip (map BuiltinName (enumerate @BuiltinName)) (repeat Nothing))
-    validateFunction function = do
-        mapM_ validateName (map AST.argumentType (AST.arguments function))
+
+type ValidateM info = StateT [Map Name (Maybe info)] (Except (ValidationError info))
+
+class Validate node where
+    validate :: Eq info => node (NameWith info) -> ValidateM info ()
+
+instance Validate (AST.Function a) where
+    validate function = do
+        mapM_ validateName (map (AST.argumentType . nodeWithout) (AST.arguments function))
         mapM_ validateName (AST.returns function)
         recordName (AST.functionName function)
         modifyState (prepend Map.empty)
-        mapM_ recordName (map AST.argumentName (AST.arguments function))
-        validateBlock (AST.body function)
+        mapM_ recordName (map (AST.argumentName . nodeWithout) (AST.arguments function))
+        validate (AST.body function)
         modifyState (assert . tail)
         return ()
-    validateBlock block = do
+
+instance Validate (AST.Block a) where
+    validate block = do
         modifyState (prepend Map.empty)
         mapM_ recordName        (AST.exitTarget block)
-        mapM_ validateStatement (AST.statements block)
+        mapM_ validate (AST.statements block)
         modifyState (assert . tail)
         return ()
-    validateStatement = \case
+
+instance Validate (AST.Statement a) where
+    validate = \case
         AST.Binding _ name expr -> do
-            validateExpression expr
+            validate expr
             recordName name
         AST.Assign n expr -> do
-            validateExpression expr
+            validate expr
             validateName n
         AST.IfThen expr body -> do
-            validateExpression expr
-            validateBlock body
+            validate expr
+            validate body
         AST.IfThenElse expr body1 body2 -> do
-            validateExpression expr
-            mapM_ validateBlock [body1, body2]
+            validate expr
+            mapM_ validate [body1, body2]
         AST.Forever body -> do
-            validateBlock body
+            validate body
         AST.While expr body -> do
-            validateExpression expr
-            validateBlock body
+            validate expr
+            validate body
         AST.Return target maybeExpr -> do
             validateName target
-            mapM_ validateExpression maybeExpr
+            mapM_ validate maybeExpr
         AST.Break target -> do
             validateName target
         AST.Expression expr -> do
-            validateExpression expr
-    validateExpression = \case
+            validate expr
+
+instance Validate (AST.Expression a) where
+    validate = \case
         AST.Named n -> do
             validateName n
         AST.UnaryOperator _ expr -> do
-            validateExpression expr
+            validate expr
         AST.BinaryOperator expr1 _ expr2 -> do
-            mapM_ validateExpression [expr1, expr2]
+            mapM_ validate [expr1, expr2]
         AST.NumberLiteral _ -> do
             return ()
         AST.TextLiteral _ -> do
             return ()
         AST.Call name exprs -> do
             validateName name
-            mapM_ validateExpression exprs
-    validateName (NameWith name info1) = do
-        context <- getState
-        case Map.lookup name (Map.unions context) of
-            Nothing -> do
-                throwError (NotInScope name)
-            Just Nothing -> do
-                return () -- builtin names have no stored info (TODO?)
-            Just (Just info2) -> do
-                when (info1 != info2) do
-                    throwError (InfoMismatch (NameWith name info1) (NameWith name info2))
-    recordName (NameWith name info) = do
-        doModifyState \context -> do
-            let scope = assert (head context)
-            when (Map.member name scope) do
-                throwError (Redefined name)
-            return (prepend (Map.insert name (Just info) scope) (assert (tail context)))
-        return ()
+            mapM_ validate exprs
+
+instance Validate (node a) => Validate (NodeWith node a) where
+    validate = validate . nodeWithout
+
+validateName :: Eq info => NameWith info -> ValidateM info ()
+validateName (NameWith name info1) = do
+    context <- getState
+    case Map.lookup name (Map.unions context) of
+        Nothing -> do
+            throwError (NotInScope name)
+        Just Nothing -> do
+            return () -- builtin names have no stored info (TODO?)
+        Just (Just info2) -> do
+            when (info1 != info2) do
+                throwError (InfoMismatch (NameWith name info1) (NameWith name info2))
+
+recordName :: Eq info => NameWith info -> ValidateM info ()
+recordName (NameWith name info) = do
+    doModifyState \context -> do
+        let scope = assert (head context)
+        when (Map.member name scope) do
+            throwError (Redefined name)
+        return (prepend (Map.insert name (Just info) scope) (assert (tail context)))
+    return ()
+
