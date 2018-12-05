@@ -216,10 +216,10 @@ instance CheckTypeOf AST.Function where
     checkUnit AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         argumentTypes <- forM arguments \argument -> do
             let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
-            resolvedType <- nameAsType argumentType
+            resolvedType <- (nameAsType . assert . match @"NamedType" . nodeWithout) argumentType -- TODO FIXME HACK
             recordType resolvedType argumentName
             return resolvedType
-        maybeReturnType <- mapM nameAsType returns
+        maybeReturnType <- mapM (nameAsType . assert . match @"NamedType" . nodeWithout) returns -- TODO FIXME HACK
         let returnType = fromMaybe Unit maybeReturnType
         recordType (Function argumentTypes returnType) functionName
         checkBlock returnType body
@@ -368,17 +368,20 @@ class Validate node where
 validateTypes :: AST metadata TypedName -> Either (ValidationError metadata) ()
 validateTypes = runExcept . mapM_ validate
 
+instance Validate AST.Type where
+    validate = \case
+        AST.NamedType typeName -> do
+            when (Name.info typeName != Type) do
+                throwError (ExpectedType Type (AST.Named typeName))
+
 instance Validate AST.Function where
     validate AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
-        let getNameAsType = assert . builtinAsType . assert . match @"BuiltinName" . Name.name -- not very nice... :/
-            validateType typeName = do
-                when (Name.info typeName != Type) do
-                    throwError (ExpectedType Type (AST.Named typeName))
+        let getNameAsType = assert . builtinAsType . assert . match @"BuiltinName" . Name.name . assert . match @"NamedType" . nodeWithout -- TODO FIXME HACK
         forM_ arguments \argument -> do
             let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
-            validateType argumentType
+            validate argumentType
             checkName (getNameAsType argumentType) argumentName
-        mapM_ validateType returns
+        mapM_ validate returns
         let functionType = Function argTypes returnType
             argTypes     = map (typeOf . AST.Named . AST.argumentName . nodeWithout) arguments
             returnType   = maybe Unit getNameAsType returns

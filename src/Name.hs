@@ -96,13 +96,18 @@ class (forall metadata. Monad (m metadata)) => NameResolveM m where
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node metadata Text -> m metadata (node metadata ResolvedName)
 
--- TODO properly record metadata for arguments / return type etc.!
+instance ResolveNamesIn AST.Type where
+    resolveNamesIn = \case
+        AST.NamedType name -> do
+            resolvedName <- lookupName name
+            return (AST.NamedType resolvedName)
+
 instance ResolveNamesIn AST.Function where
     resolveNamesIn AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         -- the argument types and return type are in global scope, must be resolved before entering any scope
         argumentTypes <- forM arguments \argument -> do
-            (lookupName . AST.argumentType . nodeWithout) argument
-        resolvedReturns <- mapM lookupName returns
+            (resolveNamesIn . AST.argumentType . nodeWithout) argument
+        resolvedReturns <- mapM resolveNamesIn returns
         -- the argument names are in scope for the body, and may also be shadowed by it
         (resolvedArguments, resolvedBody) <- enterScope do
             resolvedArguments <- forM (zip argumentTypes arguments) \(resolvedType, argument) -> do
@@ -303,12 +308,17 @@ validateNames = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validat
 type ValidateM info = StateT [Map Name (Maybe info)] (Except (ValidationError info))
 
 class Validate node where
-    validate :: Eq info => node (NameWith info) -> ValidateM info ()
+    validate :: Eq info => node metadata (NameWith info) -> ValidateM info ()
 
-instance Validate (AST.Function metadata) where
+instance Validate AST.Type where
+    validate = \case
+        AST.NamedType name -> do
+            validateName name
+
+instance Validate AST.Function where
     validate function = do
-        mapM_ validateName (map (AST.argumentType . nodeWithout) (AST.arguments function))
-        mapM_ validateName (AST.returns function)
+        mapM_ validate (map (AST.argumentType . nodeWithout) (AST.arguments function))
+        mapM_ validate (AST.returns function)
         recordName (AST.functionName function)
         modifyState (prepend Map.empty)
         mapM_ recordName (map (AST.argumentName . nodeWithout) (AST.arguments function))
@@ -316,7 +326,7 @@ instance Validate (AST.Function metadata) where
         modifyState (assert . tail)
         return ()
 
-instance Validate (AST.Block metadata) where
+instance Validate AST.Block where
     validate block = do
         modifyState (prepend Map.empty)
         mapM_ recordName        (AST.exitTarget block)
@@ -324,7 +334,7 @@ instance Validate (AST.Block metadata) where
         modifyState (assert . tail)
         return ()
 
-instance Validate (AST.Statement metadata) where
+instance Validate AST.Statement where
     validate = \case
         AST.Binding _ name expr -> do
             validate expr
@@ -351,7 +361,7 @@ instance Validate (AST.Statement metadata) where
         AST.Expression expr -> do
             validate expr
 
-instance Validate (AST.Expression metadata) where
+instance Validate AST.Expression where
     validate = \case
         AST.Named n -> do
             validateName n
@@ -367,7 +377,7 @@ instance Validate (AST.Expression metadata) where
             validateName name
             mapM_ validate exprs
 
-instance Validate (node metadata) => Validate (NodeWith node metadata) where
+instance Validate node => Validate (NodeWith node) where
     validate = validate . nodeWithout
 
 validateName :: Eq info => NameWith info -> ValidateM info ()

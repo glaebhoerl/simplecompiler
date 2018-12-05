@@ -1,6 +1,6 @@
 {-# LANGUAGE RecursiveDo #-} -- needed for Earley
 
-module AST (Expression (..), BindingType (..), Statement (..), Block (..), Argument (..), Function (..), AST, Error (..), parse, RenderName (..)) where
+module AST (Type (..), Expression (..), BindingType (..), Statement (..), Block (..), Argument (..), Function (..), AST, Error (..), parse, RenderName (..)) where
 
 import MyPrelude
 
@@ -13,6 +13,11 @@ import Pretty (Render, render)
 
 
 ----------------------------------------------------------------------------- types
+
+data Type metadata name
+    = NamedType name
+    -- TODO: add FunctionType
+    deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Expression metadata name
     = Named
@@ -73,14 +78,14 @@ data Block metadata name = Block {
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Argument metadata name = Argument {
-    argumentName :: name, -- TODO `With metadata name`?
-    argumentType :: name
+    argumentName :: name, -- TODO we also want metadata here for name conflict errors... keep names and types in separate lists??
+    argumentType :: NodeWith Type metadata name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Function metadata name = Function {
     functionName :: name,
     arguments    :: [NodeWith Argument metadata name],
-    returns      :: Maybe name, -- TODO `With metadata name`?
+    returns      :: Maybe (NodeWith Type metadata name),
     body         :: NodeWith Block metadata name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
@@ -249,16 +254,19 @@ blockGrammar = mdo
 functionGrammar :: Grammar r (NodeWith Function)
 functionGrammar = do
     block <- blockGrammar
+    type' <- locatedNode do
+        typeName <- tokenConstructor @"Name"
+        return (NamedType typeName)
     argument <- locatedNode do
         argumentName <- tokenConstructor @"Name"
         token T.Colon
-        argumentType <- tokenConstructor @"Name"
+        argumentType <- type'
         return Argument { argumentName, argumentType }
     locatedNode do
         keyword T.K_function
         functionName <- tokenConstructor @"Name"
         arguments    <- bracketed T.Round (separatedBy T.Comma argument)
-        returns      <- liftA1 head (zeroOrOne (keyword T.K_returns `followedBy` tokenConstructor @"Name"))
+        returns      <- liftA1 head (zeroOrOne (keyword T.K_returns `followedBy` type'))
         body         <- block
         return Function { functionName, arguments, returns, body = mapNode (set (field @"exitTarget") (Just "return")) body }
 
@@ -295,6 +303,10 @@ class RenderName name where
 instance RenderName Text where
     renderName defOrUse name = P.note (P.Identifier (P.IdentInfo name defOrUse P.Unknown False)) (P.pretty name)
 
+instance RenderName name => Render (Type metadata name) where
+    render = \case
+        NamedType name -> renderName P.Use name
+
 instance RenderName name => Render (Expression metadata name) where
     render = \case
         Named          name           -> renderName P.Use name
@@ -325,13 +337,13 @@ instance RenderName name => Render (Block metadata name) where
     render Block { statements } = mconcat (P.punctuate P.hardline (map render statements))
 
 instance RenderName name => Render (Argument metadata name) where
-    render Argument { argumentName, argumentType } = renderName P.Definition argumentName ++ P.colon ++ " " ++ renderName P.Use argumentType
+    render Argument { argumentName, argumentType } = renderName P.Definition argumentName ++ P.colon ++ " " ++ render argumentType
 
 instance RenderName name => Render (Function metadata name) where
     render Function { functionName, arguments, returns, body } = renderedHead ++ renderedArguments ++ renderedReturns ++ renderedBody where
         renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
         renderedArguments = P.parens (P.hsep (P.punctuate "," (map render arguments)))
-        renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ renderName P.Use returnType) returns
+        renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ render returnType) returns
         renderedBody      = P.hardline ++ renderBlock body
 
 instance RenderName name => Render (AST metadata name) where
