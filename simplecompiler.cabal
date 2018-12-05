@@ -57,6 +57,7 @@ executable simplecompiler
                        PartialTypeSignatures,
                        PatternSynonyms,
                        PolyKinds,
+                       QuantifiedConstraints,
                        RankNTypes,
                        ScopedTypeVariables,
                        StandaloneDeriving,

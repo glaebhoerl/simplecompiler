@@ -558,35 +558,38 @@ data UnaryOperator
 instance Enumerable UnaryOperator
 
 
-data With a b = With {
-    getWith :: a,
-    unWith  :: b
+data With metadata a = With {
+    getMetadata :: metadata,
+    unWith      :: a
 } deriving (Generic, Show, Functor, Foldable, Traversable)
 
-instance Eq b => Eq (With a b) where
+instance Eq a => Eq (With metadata a) where
     (==) = (==) `on` unWith
 
-instance Ord b => Ord (With a b) where
+instance Ord a => Ord (With metadata a) where
     compare = compare `on` unWith
 
-instance Monoid a => Applicative (With a) where
+instance Monoid metadata => Applicative (With metadata) where
     pure = With mempty
     liftA2 f (With a1 b1) (With a2 b2) = With (a1 ++ a2) (f b1 b2)
 
-newtype NodeWith node a b = NodeWith {
-    getNodeWith :: With a (node a b)
+newtype NodeWith node metadata a = NodeWith {
+    getNodeWith :: With metadata (node metadata a)
 } deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
-nodeWithout :: NodeWith node a b -> node a b
+nodeWithout :: NodeWith node metadata a -> node metadata a
 nodeWithout = unWith . getNodeWith
 
-mapNode :: (node a b1 -> node a b2) -> NodeWith node a b1 -> NodeWith node a b2
+nodeMetadata :: NodeWith node metadata a -> metadata
+nodeMetadata = getMetadata . getNodeWith
+
+mapNode :: (node metadata a -> node metadata b) -> NodeWith node metadata a -> NodeWith node metadata b
 mapNode f = NodeWith . fmap f . getNodeWith
 
-mapNodeM :: Monad m => (node a b1 -> m (node a b2)) -> NodeWith node a b1 -> m (NodeWith node a b2)
+mapNodeM :: Monad m => (node metadata a -> m (node metadata b)) -> NodeWith node metadata a -> m (NodeWith node metadata b)
 mapNodeM f = liftM NodeWith . mapM f . getNodeWith
 
-forNodeM :: Monad m => NodeWith node a b1 -> (node a b1 -> m (node a b2)) -> m (NodeWith node a b2)
+forNodeM :: Monad m => NodeWith node metadata a -> (node metadata a -> m (node metadata b)) -> m (NodeWith node metadata b)
 forNodeM = flip mapNodeM
 
 -- Workaround for bug with the `Alternative` instance in base: https://ghc.haskell.org/trac/ghc/ticket/15992

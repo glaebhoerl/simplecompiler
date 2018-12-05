@@ -87,15 +87,17 @@ instance AST.RenderName ResolvedName where
 
 ------------------------------------------------------------------------ resolution frontend
 
-class Monad m => NameResolveM m where
-    lookupName :: Text -> m ResolvedName
-    enterScope :: m a -> m a
-    bindName   :: AST.BindingType -> Text -> m ResolvedName
+class (forall metadata. Monad (m metadata)) => NameResolveM m where
+    lookupName     :: Text -> m metadata ResolvedName
+    enterScope     :: m metadata a -> m metadata a
+    bindName       :: AST.BindingType -> Text -> m metadata ResolvedName
+    recordMetadata :: metadata -> m metadata ()
 
 class ResolveNamesIn node where
-    resolveNamesIn :: NameResolveM m => node Text -> m (node ResolvedName)
+    resolveNamesIn :: NameResolveM m => node metadata Text -> m metadata (node metadata ResolvedName)
 
-instance ResolveNamesIn (AST.Function a) where
+-- TODO properly record metadata for arguments / return type etc.!
+instance ResolveNamesIn AST.Function where
     resolveNamesIn AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         -- the argument types and return type are in global scope, must be resolved before entering any scope
         argumentTypes <- forM arguments \argument -> do
@@ -116,17 +118,13 @@ instance ResolveNamesIn (AST.Function a) where
             AST.body         = resolvedBody
         }
 
-instance ResolveNamesIn (AST.Block a) where
+instance ResolveNamesIn AST.Block where
     resolveNamesIn AST.Block { AST.exitTarget, AST.statements } = enterScope do
         resolvedTarget     <- mapM (bindName AST.Let) exitTarget
         resolvedStatements <- mapM resolveNamesIn statements
         return (AST.Block resolvedTarget resolvedStatements)
 
--- all of this is SO CLOSE to just being a `mapM`,
--- except for `bindName` and `enterScope` for blocks...
--- we could solve `bindName` by having a binding vs. reference sum type
--- but `enterScope` is flummoxing
-instance ResolveNamesIn (AST.Statement a) where
+instance ResolveNamesIn AST.Statement where
     resolveNamesIn = \case
         AST.Binding btype name expr -> do
             -- resolve the expression BEFORE binding the name:
@@ -134,6 +132,10 @@ instance ResolveNamesIn (AST.Statement a) where
             resolvedExpr <- resolveNamesIn expr
             fullName <- bindName btype name
             return (AST.Binding btype fullName resolvedExpr)
+        AST.Assign var expr -> do
+            resolvedVar  <- lookupName var
+            resolvedExpr <- resolveNamesIn expr
+            return (AST.Assign resolvedVar resolvedExpr)
         AST.IfThen expr body -> do
             resolvedExpr <- resolveNamesIn expr
             resolvedBody <- resolveNamesIn body
@@ -150,14 +152,44 @@ instance ResolveNamesIn (AST.Statement a) where
             resolvedExpr <- resolveNamesIn expr
             resolvedBody <- resolveNamesIn body
             return (AST.While resolvedExpr resolvedBody)
-        ast -> do
-            mapM lookupName ast
+        AST.Return target maybeExpr -> do
+            resolvedTarget <- lookupName target
+            resolvedExpr   <- mapM resolveNamesIn maybeExpr
+            return (AST.Return resolvedTarget resolvedExpr)
+        AST.Break target -> do
+            resolvedTarget <- lookupName target
+            return (AST.Break resolvedTarget)
+        AST.Expression expr -> do
+            resolvedExpr <- resolveNamesIn expr
+            return (AST.Expression resolvedExpr)
 
-instance ResolveNamesIn (AST.Expression a) where
-    resolveNamesIn = mapM lookupName
+-- We used to be able to do this as just ` mapM lookupName`, but that doesn't record metadata...
+-- Wonder if we could do anything to make it work "automatically" again...
+instance ResolveNamesIn AST.Expression where
+    resolveNamesIn = \case
+        AST.Named n -> do
+            resolvedName <- lookupName n
+            return (AST.Named resolvedName)
+        AST.UnaryOperator op expr -> do
+            resolvedExpr <- resolveNamesIn expr
+            return (AST.UnaryOperator op resolvedExpr)
+        AST.BinaryOperator expr1 op expr2 -> do
+            resolvedExpr1 <- resolveNamesIn expr1
+            resolvedExpr2 <- resolveNamesIn expr2
+            return (AST.BinaryOperator resolvedExpr1 op resolvedExpr2)
+        AST.Call name exprs -> do
+            resolvedName  <- lookupName name
+            resolvedExprs <- mapM resolveNamesIn exprs
+            return (AST.Call resolvedName resolvedExprs)
+        AST.NumberLiteral number -> do
+            return (AST.NumberLiteral number)
+        AST.TextLiteral text -> do
+            return (AST.TextLiteral text)
 
-instance ResolveNamesIn (node a) => ResolveNamesIn (NodeWith node a) where
-    resolveNamesIn = mapNodeM resolveNamesIn
+instance ResolveNamesIn node => ResolveNamesIn (NodeWith node) where
+    resolveNamesIn node = do
+        recordMetadata (nodeMetadata node)
+        mapNodeM resolveNamesIn node
 
 
 
@@ -168,22 +200,24 @@ data Error
     | NameConflict Text Path
     deriving (Generic, Show)
 
-newtype NameResolve a = NameResolve {
-    runNameResolve :: StateT Context (Except Error) a
-} deriving (Functor, Applicative, Monad, MonadState Context, MonadError Error)
+newtype NameResolve metadata a = NameResolve {
+    runNameResolve :: ExceptT Error (State (Context metadata)) a
+} deriving (Functor, Applicative, Monad, MonadState (Context metadata), MonadError Error)
 
--- TODO return `With a Error` for location info
-resolveNames :: AST a Text -> Either Error (AST a ResolvedName)
-resolveNames = runExcept . evalStateT (Context Set.empty "" []) . runNameResolve . mapM resolveFunction
+resolveNames :: AST metadata Text -> Either (With metadata Error) (AST metadata ResolvedName)
+resolveNames = plumbMetadata . runState (Context Set.empty "" [] Nothing) . runExceptT . runNameResolve . mapM resolveFunction where
+    plumbMetadata = \case
+        (Right result, _      ) -> Right result
+        (Left  error,  context) -> Left (With (assert (metadata context)) error)
 
-resolveFunction :: NodeWith AST.Function a Text -> NameResolve (NodeWith AST.Function a ResolvedName)
+resolveFunction :: NodeWith AST.Function metadata Text -> NameResolve metadata (NodeWith AST.Function metadata ResolvedName)
 resolveFunction = mapNodeM impl where
     impl function@AST.Function { AST.functionName } = do
-        doModifyState \Context { functions, locals } -> do
+        doModifyState \Context { functions, locals, metadata } -> do
             assertEqM locals []
             when (Set.member functionName functions) do
                 throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
-            return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals }
+            return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals, metadata }
         resolveNamesIn function
 
 -- the stack of scopes we are currently inside
@@ -191,10 +225,11 @@ resolveFunction = mapNodeM impl where
 -- snd: the names bound within that scope
 type LocalContext = [(Int, Map Text AST.BindingType)]  -- TODO maybe use Natural and NonEmpty here
 
-data Context = Context {
+data Context metadata = Context {
     functions       :: Set Text,
     currentFunction :: Text,
-    locals          :: LocalContext
+    locals          :: LocalContext,
+    metadata        :: Maybe metadata
 } deriving (Generic, Show)
 
 lookupLocal :: Text -> LocalContext -> Maybe ([Int], AST.BindingType)
@@ -204,7 +239,7 @@ lookupLocal name = \case
         Just bindingType  -> Just (map fst parent, bindingType)
         Nothing           -> lookupLocal name parent
 
-lookupInContext :: Text -> Context -> Maybe ResolvedName
+lookupInContext :: Text -> Context metadata -> Maybe ResolvedName
 lookupInContext givenName Context { functions, currentFunction, locals } = oneOf [tryLocal, tryFunction, tryBuiltin] where
     tryLocal    = fmap makeLocalName (lookupLocal givenName locals) where
         makeLocalName (scope, info) = NameWith { name = Name LocalName { path = Path { function = currentFunction, scope }, givenName }, info }
@@ -242,6 +277,8 @@ instance NameResolveM NameResolve where
                 setM (field @"locals") ((scopeID, Map.insert name info names) : rest)
                 return NameWith { name = Name LocalName { path = Path { function = currentFunction context, scope = map fst rest }, givenName = name }, info }
 
+    recordMetadata = setM (field @"metadata") . Just
+
 
 
 ------------------------------------------------------------------------ validation
@@ -259,7 +296,7 @@ data ValidationError info
 -- This does NOT check that:
 --  * The `path` component of the name is correct. This is regarded as an implementation detail, subject to change.
 --  * The binding types are stored correctly. This is an unfortunate limitation of being polymorphic over the `info` type.
-validateNames :: Eq info => AST a (NameWith info) -> Either (ValidationError info) ()
+validateNames :: Eq info => AST metadata (NameWith info) -> Either (ValidationError info) ()
 validateNames = runExcept . evalStateT [Map.empty, builtinNames] . mapM_ validate where
     builtinNames = Map.fromList (zip (map BuiltinName (enumerate @BuiltinName)) (repeat Nothing))
 
@@ -268,7 +305,7 @@ type ValidateM info = StateT [Map Name (Maybe info)] (Except (ValidationError in
 class Validate node where
     validate :: Eq info => node (NameWith info) -> ValidateM info ()
 
-instance Validate (AST.Function a) where
+instance Validate (AST.Function metadata) where
     validate function = do
         mapM_ validateName (map (AST.argumentType . nodeWithout) (AST.arguments function))
         mapM_ validateName (AST.returns function)
@@ -279,7 +316,7 @@ instance Validate (AST.Function a) where
         modifyState (assert . tail)
         return ()
 
-instance Validate (AST.Block a) where
+instance Validate (AST.Block metadata) where
     validate block = do
         modifyState (prepend Map.empty)
         mapM_ recordName        (AST.exitTarget block)
@@ -287,7 +324,7 @@ instance Validate (AST.Block a) where
         modifyState (assert . tail)
         return ()
 
-instance Validate (AST.Statement a) where
+instance Validate (AST.Statement metadata) where
     validate = \case
         AST.Binding _ name expr -> do
             validate expr
@@ -314,7 +351,7 @@ instance Validate (AST.Statement a) where
         AST.Expression expr -> do
             validate expr
 
-instance Validate (AST.Expression a) where
+instance Validate (AST.Expression metadata) where
     validate = \case
         AST.Named n -> do
             validateName n
@@ -330,7 +367,7 @@ instance Validate (AST.Expression a) where
             validateName name
             mapM_ validate exprs
 
-instance Validate (node a) => Validate (NodeWith node a) where
+instance Validate (node metadata) => Validate (NodeWith node metadata) where
     validate = validate . nodeWithout
 
 validateName :: Eq info => NameWith info -> ValidateM info ()

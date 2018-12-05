@@ -130,13 +130,13 @@ class Monad m => TranslateM m where
     currentBlock       :: m BlockName
     currentArguments   :: m [Name]
 
-translateTemporary :: TranslateM m => NodeWith AST.Expression a Type.TypedName -> m Value
+translateTemporary :: TranslateM m => NodeWith AST.Expression metadata Type.TypedName -> m Value
 translateTemporary = translateExpression Nothing . nodeWithout
 
-translateBinding :: TranslateM m => Type.TypedName -> NodeWith AST.Expression a Type.TypedName -> m Value
+translateBinding :: TranslateM m => Type.TypedName -> NodeWith AST.Expression metadata Type.TypedName -> m Value
 translateBinding name = translateExpression (Just name) . nodeWithout
 
-translateExpression :: TranslateM m => Maybe Type.TypedName -> AST.Expression a Type.TypedName -> m Value
+translateExpression :: TranslateM m => Maybe Type.TypedName -> AST.Expression metadata Type.TypedName -> m Value
 translateExpression providedName = let emitNamedLet = emitLet providedName in \case
     AST.Named name -> do
         return (Named (translateName name))
@@ -185,7 +185,7 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         name   <- emitNamedLet (Call (Named (translateName function)) values)
         return (Named name)
 
-translateStatement :: TranslateM m => NodeWith AST.Statement a Type.TypedName -> m ()
+translateStatement :: TranslateM m => NodeWith AST.Statement metadata Type.TypedName -> m ()
 translateStatement = (flip (.)) nodeWithout \case -- HACK
     AST.Binding _ name expr -> do
         _ <- translateBinding name expr
@@ -237,7 +237,7 @@ translateStatement = (flip (.)) nodeWithout \case -- HACK
     AST.Expression expr -> do
         unused (translateTemporary expr)
 
-translateStatements :: TranslateM m => NodeWith AST.Block a Type.TypedName -> m ()
+translateStatements :: TranslateM m => NodeWith AST.Block metadata Type.TypedName -> m ()
 translateStatements = mapM_ translateStatement . AST.statements .  nodeWithout
 
 
@@ -258,7 +258,7 @@ translateBlockName (Name.NameWith name ty) = Name (ASTName name) (translatedType
         Type.SmallType ty -> BlockType [ty]
         Type.Type         -> bug "Use of typename as exit target"
 
-translateFunction :: AST.Function a Type.TypedName -> Function
+translateFunction :: AST.Function metadata Type.TypedName -> Function
 translateFunction AST.Function { AST.functionName, AST.arguments, AST.body = functionBody } = result where
     result        = evalState initialState (runTranslate translateImpl)
     initialState  = TranslateState  { lastID = 0, innermostBlock = BlockState (ID 0) "root" rootBlockArgs [] Nothing Nothing }

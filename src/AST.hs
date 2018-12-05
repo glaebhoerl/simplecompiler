@@ -14,23 +14,23 @@ import Pretty (Render, render)
 
 ----------------------------------------------------------------------------- types
 
-data Expression a name
+data Expression metadata name
     = Named
         name
     | Call
         name
-        [NodeWith Expression a name]
+        [NodeWith Expression metadata name]
     | NumberLiteral
         Integer
     | TextLiteral
         Text
     | UnaryOperator
         UnaryOperator
-        (NodeWith Expression a name)
+        (NodeWith Expression metadata name)
     | BinaryOperator
-        (NodeWith Expression a name)
+        (NodeWith Expression metadata name)
         BinaryOperator
-        (NodeWith Expression a name)
+        (NodeWith Expression metadata name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data BindingType
@@ -38,50 +38,50 @@ data BindingType
     | Var
     deriving (Generic, Eq, Show)
 
-data Statement a name
+data Statement metadata name
     = Expression
-        (NodeWith Expression a name)
+        (NodeWith Expression metadata name)
     | Binding
         BindingType
         name
-        (NodeWith Expression a name)
+        (NodeWith Expression metadata name)
     | Assign
         name
-        (NodeWith Expression a name)
+        (NodeWith Expression metadata name)
     | IfThen
-        (NodeWith Expression a name)
-        (NodeWith Block      a name)
+        (NodeWith Expression metadata name)
+        (NodeWith Block      metadata name)
     | IfThenElse
-        (NodeWith Expression a name)
-        (NodeWith Block      a name)
-        (NodeWith Block      a name)
+        (NodeWith Expression metadata name)
+        (NodeWith Block      metadata name)
+        (NodeWith Block      metadata name)
     | Forever
-        (NodeWith Block      a name)
+        (NodeWith Block      metadata name)
     | While
-        (NodeWith Expression a name)
-        (NodeWith Block      a name)
+        (NodeWith Expression metadata name)
+        (NodeWith Block      metadata name)
     | Return
         name -- return and break refer to the `exitTarget` in `Block`; these are "phantom names", not present in the source code
-        (Maybe (NodeWith Expression a name))
+        (Maybe (NodeWith Expression metadata name))
     | Break
         name -- see above
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-data Block a name = Block {
+data Block metadata name = Block {
     exitTarget :: Maybe name, -- "phantom", see above
-    statements :: [NodeWith Statement a name]
+    statements :: [NodeWith Statement metadata name]
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-data Argument a name = Argument {
-    argumentName :: name, -- TODO `With a name`?
+data Argument metadata name = Argument {
+    argumentName :: name, -- TODO `With metadata name`?
     argumentType :: name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
-data Function a name = Function {
+data Function metadata name = Function {
     functionName :: name,
-    arguments    :: [NodeWith Argument a name],
-    returns      :: Maybe name, -- TODO `With a name`?
-    body         :: NodeWith Block a name
+    arguments    :: [NodeWith Argument metadata name],
+    returns      :: Maybe name, -- TODO `With metadata name`?
+    body         :: NodeWith Block metadata name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 
@@ -123,7 +123,7 @@ followedBy = (*>)
 -- So this takes a snapshot of the location for the subnode, and also lets `Applicative` go on combining it into the location of the parent node.
 located :: Prod r (node Loc Text) -> Prod r (NodeWith node Loc Text)
 located = Compose . fmap dupLocated . getCompose where
-    dupLocated node = With (getWith node) (NodeWith node)
+    dupLocated node = With (getMetadata node) (NodeWith node)
 
 nodeRule :: Prod r (node Loc Text) -> Grammar r node
 nodeRule = fmap Compose . E.rule . getCompose
@@ -144,9 +144,9 @@ precedenceGroups = assert (justIf isWellFormed listOfGroups) where
          map LogicalOperator    [And],
          map LogicalOperator    [Or]]
 
-data BinaryOperationList a name
-    = SingleExpression (NodeWith Expression a name)
-    | BinaryOperation  (NodeWith Expression a name) BinaryOperator (BinaryOperationList a name)
+data BinaryOperationList metadata name
+    = SingleExpression (NodeWith Expression metadata name)
+    | BinaryOperation  (NodeWith Expression metadata name) BinaryOperator (BinaryOperationList metadata name)
     deriving Show
 
 resolvePrecedences :: BinaryOperationList Loc Text -> NodeWith Expression Loc Text
@@ -163,7 +163,7 @@ resolvePrecedences binaryOperationList = finalResult where
             | elem op  precedenceGroup -> SingleExpression (locatedBinaryOperator expr1 op expr2)
         other -> other
     locatedBinaryOperator expr1 op expr2 = NodeWith (With combinedLoc (BinaryOperator expr1 op expr2)) where
-        combinedLoc = mconcat (map (getWith . getNodeWith) [expr1, expr2])
+        combinedLoc = mconcat (map nodeMetadata [expr1, expr2])
 
 expressionGrammar :: Grammar r (NodeWith Expression)
 expressionGrammar = mdo
@@ -262,7 +262,7 @@ functionGrammar = do
         body         <- block
         return Function { functionName, arguments, returns, body = mapNode (set (field @"exitTarget") (Just "return")) body }
 
-type AST a name = [NodeWith Function a name]
+type AST metadata name = [NodeWith Function metadata name]
 
 data Error
     = Invalid Int [Expected] [With Loc T.Token]
@@ -286,7 +286,7 @@ parse = checkResult . E.fullParses parser where
 
 ----------------------------------------------------------------------------- pretty-printing
 
-renderBlock :: RenderName name => NodeWith Block a name -> P.Document
+renderBlock :: RenderName name => NodeWith Block metadata name -> P.Document
 renderBlock block = P.braces (P.nest 4 (P.hardline ++ render block) ++ P.hardline)
 
 class RenderName name where
@@ -295,7 +295,7 @@ class RenderName name where
 instance RenderName Text where
     renderName defOrUse name = P.note (P.Identifier (P.IdentInfo name defOrUse P.Unknown False)) (P.pretty name)
 
-instance RenderName name => Render (Expression a name) where
+instance RenderName name => Render (Expression metadata name) where
     render = \case
         Named          name           -> renderName P.Use name
         Call           name args      -> renderName P.Use name ++ P.parens (P.hsep (P.punctuate "," (map render args)))
@@ -309,7 +309,7 @@ instance Render BindingType where
         Let -> "let"
         Var -> "var"
 
-instance RenderName name => Render (Statement a name) where
+instance RenderName name => Render (Statement metadata name) where
     render = \case
         Binding    btype name expr    -> render btype ++ " " ++ renderName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ render expr ++ P.semicolon
         Assign     name expr          -> renderName P.Use name ++ " " ++ P.assignEquals ++ " " ++ render expr ++ P.semicolon
@@ -321,18 +321,18 @@ instance RenderName name => Render (Statement a name) where
         Break      _                  -> P.keyword "break"   ++ P.semicolon
         Expression expr               -> render expr       ++ P.semicolon
 
-instance RenderName name => Render (Block a name) where
+instance RenderName name => Render (Block metadata name) where
     render Block { statements } = mconcat (P.punctuate P.hardline (map render statements))
 
-instance RenderName name => Render (Argument a name) where
+instance RenderName name => Render (Argument metadata name) where
     render Argument { argumentName, argumentType } = renderName P.Definition argumentName ++ P.colon ++ " " ++ renderName P.Use argumentType
 
-instance RenderName name => Render (Function a name) where
+instance RenderName name => Render (Function metadata name) where
     render Function { functionName, arguments, returns, body } = renderedHead ++ renderedArguments ++ renderedReturns ++ renderedBody where
         renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
         renderedArguments = P.parens (P.hsep (P.punctuate "," (map render arguments)))
         renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ renderName P.Use returnType) returns
         renderedBody      = P.hardline ++ renderBlock body
 
-instance RenderName name => Render (AST a name) where
+instance RenderName name => Render (AST metadata name) where
     render = mconcat . P.punctuate P.hardline . map render

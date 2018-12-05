@@ -174,10 +174,10 @@ instance Render ByteString where
     render = P.pretty . byteStringToText
     outputWithStyle _ = Data.ByteString.hPutStr
 
-instance Render b => Render (With a b) where
+instance Render a => Render (With metadata a) where
     render = render . unWith
 
-instance Render (node a b) => Render (NodeWith node a b) where
+instance Render (node metadata a) => Render (NodeWith node metadata a) where
     render = render . nodeWithout
 
 ansiStyle :: Style -> PT.AnsiStyle

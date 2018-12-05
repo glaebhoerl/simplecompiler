@@ -30,7 +30,7 @@ data Type
 
 type TypedName = NameWith LargeType
 
-typeOf :: AST.Expression a TypedName -> Type
+typeOf :: AST.Expression metadata TypedName -> Type
 typeOf = \case
     AST.Named name -> case Name.info name of
         SmallType smallType ->
@@ -134,7 +134,7 @@ checkType expectedType node = do
     when (expectedType != actualType) do
         reportError (TypeError TypeMismatch { expectedType, actualType })
 
-instance CheckTypeOf (AST.Expression a) where
+instance CheckTypeOf (AST.Expression metadata) where
     inferType = \case
         AST.Named name -> do
             lookupType name
@@ -169,7 +169,7 @@ instance CheckTypeOf (AST.Expression a) where
                 _ -> do
                     reportError CallOfNonFunction
 
-instance CheckTypeOf (AST.Statement a) where
+instance CheckTypeOf (AST.Statement metadata) where
     checkUnit = \case
         AST.Binding _ name expr -> do
             inferredType <- inferType expr
@@ -202,16 +202,16 @@ instance CheckTypeOf (AST.Statement a) where
         AST.Expression expr -> do
             unused (inferType expr)
 
-instance CheckTypeOf (AST.Block a) where
+instance CheckTypeOf (AST.Block metadata) where
     checkUnit AST.Block { AST.statements } = do
         mapM_ checkUnit statements
 
-checkBlock :: TypeCheckM m => Type -> NodeWith AST.Block a ResolvedName -> m ()
+checkBlock :: TypeCheckM m => Type -> NodeWith AST.Block metadata ResolvedName -> m ()
 checkBlock exitTargetType block = do
     recordType exitTargetType (assert (AST.exitTarget (nodeWithout block)))
     checkUnit block
 
-instance CheckTypeOf (AST.Function a) where
+instance CheckTypeOf (AST.Function metadata) where
     checkUnit AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         argumentTypes <- forM arguments \argument -> do
             let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
@@ -225,7 +225,7 @@ instance CheckTypeOf (AST.Function a) where
         when (returnType != Unit && not (definitelyReturns (controlFlow body))) do
             reportError FunctionWithoutReturn
 
-instance CheckTypeOf (node a) => CheckTypeOf (NodeWith node a) where
+instance CheckTypeOf (node metadata) => CheckTypeOf (NodeWith node metadata) where
     inferType = inferType . nodeWithout
 
 data ControlFlow = ControlFlow {
@@ -244,10 +244,10 @@ instance Monoid ControlFlow where
 class CheckControlFlow node where
     controlFlow :: Eq name => node name -> ControlFlow
 
-instance CheckControlFlow (AST.Block a) where
+instance CheckControlFlow (AST.Block metadata) where
     controlFlow = mconcat . map controlFlow . AST.statements
 
-instance CheckControlFlow (AST.Statement a) where
+instance CheckControlFlow (AST.Statement metadata) where
     controlFlow = \case
         AST.Return {} ->
             ControlFlow True  False
@@ -276,7 +276,7 @@ instance CheckControlFlow (AST.Statement a) where
                 doesReturn = definitelyReturns (controlFlow block)
                 block      = nodeWithout blockWith
 
-instance CheckControlFlow (node a) => CheckControlFlow (NodeWith node a) where
+instance CheckControlFlow (node metadata) => CheckControlFlow (NodeWith node metadata) where
     controlFlow = controlFlow . nodeWithout
 
 
@@ -286,7 +286,7 @@ newtype TypeCheck a = TypeCheck {
     runTypeCheck :: StateT (Map Name Type) (Except Error) a
 } deriving (Functor, Applicative, Monad, MonadState (Map Name Type), MonadError Error)
 
-checkTypes :: AST a ResolvedName -> Either Error (AST a TypedName)
+checkTypes :: AST metadata ResolvedName -> Either Error (AST metadata TypedName)
 checkTypes ast = do
     nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkUnit) ast
     let makeNameTyped (NameWith name _) = NameWith name (assert (oneOf [tryLookup, tryBuiltin])) where
@@ -334,16 +334,16 @@ builtinAsType = \case
 ------------------------------------------------------------------------ validation
 
 -- TODO check presence/absence of exit targets (or in Name.validate??)
-data ValidationError a
-    = ExpectedType LargeType (AST.Expression a TypedName)
-    | ExpectedFunction (AST.Expression a TypedName)
-    | ExpectedArgumentCount Int [NodeWith AST.Expression a TypedName]
+data ValidationError metadata
+    = ExpectedType LargeType (AST.Expression metadata TypedName)
+    | ExpectedFunction (AST.Expression metadata TypedName)
+    | ExpectedArgumentCount Int [NodeWith AST.Expression metadata TypedName]
     deriving (Generic, Show)
 
 type ValidateM a = Except (ValidationError a)
 
 class Validate node where
-    validate :: node a TypedName -> ValidateM a ()
+    validate :: node metadata TypedName -> ValidateM metadata ()
 
 -- This checks that:
 --  * The AST is locally well-typed at each point, based on the types stored within `Name`s.
@@ -351,7 +351,7 @@ class Validate node where
 -- This does NOT check that:
 --  * Names are actually in scope, and the info stored in `Name`s is consistent. Use `Name.validate` for that!
 --  * Literals are within range, and assignments match their binding types.
-validateTypes :: AST a TypedName -> Either (ValidationError a) ()
+validateTypes :: AST metadata TypedName -> Either (ValidationError metadata) ()
 validateTypes = runExcept . mapM_ validate
 
 instance Validate AST.Function where
@@ -432,16 +432,16 @@ instance Validate AST.Expression where
 instance Validate node => Validate (NodeWith node) where
     validate = validate . nodeWithout
 
-checkName :: Type -> TypedName -> ValidateM a ()
+checkName :: Type -> TypedName -> ValidateM metadata ()
 checkName ty name = checkImpl (SmallType ty) (AST.Named name)
 
-check :: Type -> NodeWith AST.Expression a TypedName -> ValidateM a ()
+check :: Type -> NodeWith AST.Expression metadata TypedName -> ValidateM metadata ()
 check = checkLarge . SmallType
 
-checkLarge :: LargeType -> NodeWith AST.Expression a TypedName -> ValidateM a ()
+checkLarge :: LargeType -> NodeWith AST.Expression metadata TypedName -> ValidateM metadata ()
 checkLarge expectedType = checkImpl expectedType . nodeWithout
 
-checkImpl :: LargeType -> AST.Expression a TypedName -> ValidateM a ()
+checkImpl :: LargeType -> AST.Expression metadata TypedName -> ValidateM metadata ()
 checkImpl expectedType expr = do
     when (SmallType (typeOf expr) != expectedType) do -- FIXME maybe `validate` shouldn't panic if it sees a `Type` in the wrong place, as `typeOf` does!!
         throwError (ExpectedType expectedType expr)
