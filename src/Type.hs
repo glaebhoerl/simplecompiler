@@ -114,27 +114,28 @@ data TypeMismatch = TypeMismatch {
     --expression   :: AST.Expression ResolvedName -- I think instead of this, just the location is enough?
 } deriving (Generic, Show)
 
-class Monad m => TypeCheckM m where
-    recordType  :: Type -> ResolvedName -> m ()
-    lookupType  :: ResolvedName         -> m Type
-    nameAsType  :: ResolvedName         -> m Type
-    reportError :: Error                -> m a
+class (forall metadata. Monad (m metadata)) => TypeCheckM m where
+    recordType     :: Type -> ResolvedName -> m metadata ()
+    lookupType     :: ResolvedName         -> m metadata Type
+    nameAsType     :: ResolvedName         -> m metadata Type
+    reportError    :: Error                -> m metadata a
+    recordMetadata :: metadata             -> m metadata ()
 
 class CheckTypeOf node where
-    inferType :: TypeCheckM m => node ResolvedName -> m Type
-    checkUnit :: TypeCheckM m => node ResolvedName -> m ()
+    inferType :: TypeCheckM m => node metadata ResolvedName -> m metadata Type
+    checkUnit :: TypeCheckM m => node metadata ResolvedName -> m metadata ()
     inferType node = do
         checkUnit node
         return Unit
     checkUnit = checkType Unit
 
-checkType :: (TypeCheckM m, CheckTypeOf node) => Type -> node ResolvedName -> m ()
+checkType :: (TypeCheckM m, CheckTypeOf node) => Type -> node metadata ResolvedName -> m metadata ()
 checkType expectedType node = do
     actualType <- inferType node
     when (expectedType != actualType) do
         reportError (TypeError TypeMismatch { expectedType, actualType })
 
-instance CheckTypeOf (AST.Expression metadata) where
+instance CheckTypeOf AST.Expression where
     inferType = \case
         AST.Named name -> do
             lookupType name
@@ -169,7 +170,7 @@ instance CheckTypeOf (AST.Expression metadata) where
                 _ -> do
                     reportError CallOfNonFunction
 
-instance CheckTypeOf (AST.Statement metadata) where
+instance CheckTypeOf AST.Statement where
     checkUnit = \case
         AST.Binding _ name expr -> do
             inferredType <- inferType expr
@@ -202,16 +203,16 @@ instance CheckTypeOf (AST.Statement metadata) where
         AST.Expression expr -> do
             unused (inferType expr)
 
-instance CheckTypeOf (AST.Block metadata) where
+instance CheckTypeOf AST.Block where
     checkUnit AST.Block { AST.statements } = do
         mapM_ checkUnit statements
 
-checkBlock :: TypeCheckM m => Type -> NodeWith AST.Block metadata ResolvedName -> m ()
+checkBlock :: TypeCheckM m => Type -> NodeWith AST.Block metadata ResolvedName -> m metadata ()
 checkBlock exitTargetType block = do
     recordType exitTargetType (assert (AST.exitTarget (nodeWithout block)))
     checkUnit block
 
-instance CheckTypeOf (AST.Function metadata) where
+instance CheckTypeOf AST.Function where
     checkUnit AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         argumentTypes <- forM arguments \argument -> do
             let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
@@ -225,8 +226,10 @@ instance CheckTypeOf (AST.Function metadata) where
         when (returnType != Unit && not (definitelyReturns (controlFlow body))) do
             reportError FunctionWithoutReturn
 
-instance CheckTypeOf (node metadata) => CheckTypeOf (NodeWith node metadata) where
-    inferType = inferType . nodeWithout
+instance CheckTypeOf node => CheckTypeOf (NodeWith node) where
+    inferType node = do
+        recordMetadata (nodeMetadata node)
+        inferType (nodeWithout node)
 
 data ControlFlow = ControlFlow {
     definitelyReturns :: Bool, -- guaranteed divergence also counts as "returning"
@@ -242,12 +245,12 @@ instance Monoid ControlFlow where
     mempty = ControlFlow False False
 
 class CheckControlFlow node where
-    controlFlow :: Eq name => node name -> ControlFlow
+    controlFlow :: Eq name => node metadata name -> ControlFlow
 
-instance CheckControlFlow (AST.Block metadata) where
+instance CheckControlFlow AST.Block where
     controlFlow = mconcat . map controlFlow . AST.statements
 
-instance CheckControlFlow (AST.Statement metadata) where
+instance CheckControlFlow AST.Statement where
     controlFlow = \case
         AST.Return {} ->
             ControlFlow True  False
@@ -276,27 +279,36 @@ instance CheckControlFlow (AST.Statement metadata) where
                 doesReturn = definitelyReturns (controlFlow block)
                 block      = nodeWithout blockWith
 
-instance CheckControlFlow (node metadata) => CheckControlFlow (NodeWith node metadata) where
+instance CheckControlFlow node => CheckControlFlow (NodeWith node) where
     controlFlow = controlFlow . nodeWithout
 
 
 ------------------------------------------------------------------------ typechecker backend
 
-newtype TypeCheck a = TypeCheck {
-    runTypeCheck :: StateT (Map Name Type) (Except Error) a
-} deriving (Functor, Applicative, Monad, MonadState (Map Name Type), MonadError Error)
+newtype TypeCheck metadata a = TypeCheck {
+    runTypeCheck :: (ExceptT Error) (State (TypeCheckState metadata)) a
+} deriving (Functor, Applicative, Monad, MonadState (TypeCheckState metadata), MonadError Error)
 
-checkTypes :: AST metadata ResolvedName -> Either Error (AST metadata TypedName)
-checkTypes ast = do
-    nameToTypeMap <- (runExcept . execStateT Map.empty . runTypeCheck . mapM_ checkUnit) ast
-    let makeNameTyped (NameWith name _) = NameWith name (assert (oneOf [tryLookup, tryBuiltin])) where
-            tryLookup  = fmap SmallType     (Map.lookup name nameToTypeMap)
+data TypeCheckState metadata = TypeCheckState {
+    types    :: Map Name Type,
+    metadata :: Maybe metadata
+} deriving (Generic, Show)
+
+checkTypes :: AST metadata ResolvedName -> Either (With metadata Error) (AST metadata TypedName)
+checkTypes ast = pipeline ast where
+    pipeline        = constructResult . runState initialState . runExceptT . runTypeCheck . mapM_ checkUnit
+    initialState    = TypeCheckState Map.empty Nothing
+    constructResult = \case
+        (Right (),    TypeCheckState { types    }) -> Right (map (fmap (makeNameTyped types)) ast)
+        (Left  error, TypeCheckState { metadata }) -> Left  (With (assert metadata) error)
+    makeNameTyped types (NameWith name _) =
+        NameWith name (assert (oneOf [tryLookup, tryBuiltin])) where
+            tryLookup  = fmap SmallType     (Map.lookup name types)
             tryBuiltin = fmap typeOfBuiltin (match @"BuiltinName" name)
-    return (map (fmap makeNameTyped) ast)
 
 instance TypeCheckM TypeCheck where
     recordType typeOfName name = do
-        doModifyState \typeMap -> do
+        doModifyM (field @"types") \typeMap -> do
             assertM (not (Map.member (Name.name name) typeMap))
             return (Map.insert (Name.name name) typeOfName typeMap)
         return ()
@@ -306,12 +318,14 @@ instance TypeCheckM TypeCheck where
                 SmallType smallType -> return smallType
                 Type                -> reportError UseOfTypeAsExpression
         NameWith otherName                  _ -> do
-            liftM (assert . Map.lookup otherName) getState
+            liftM (assert . Map.lookup otherName) (getM (field @"types"))
     nameAsType = \case
         NameWith (Name.BuiltinName builtin) _ | Just builtinType <- builtinAsType builtin -> return builtinType
         _ -> reportError UseOfExpressionAsType
     reportError err = do
         throwError err
+    recordMetadata = do
+        setM (field @"metadata") . Just
 
 typeOfBuiltin :: Name.BuiltinName -> LargeType
 typeOfBuiltin = \case
