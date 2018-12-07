@@ -50,13 +50,11 @@ typeOf = \case
             ArithmeticOperator _ -> Int
             ComparisonOperator _ -> Bool
             LogicalOperator    _ -> Bool
-    AST.Call name _ -> case Name.info name of
-        HasType (Function _ returnType) ->
+    AST.Call fn _ -> case typeOf (nodeWithout fn) of
+        Function _ returnType ->
             returnType
-        HasType _ ->
+        _ ->
             bug "Call of non-function in typed AST"
-        IsType _ ->
-            bug "Expression which IsType in typed AST"
 
 
 
@@ -161,8 +159,8 @@ instance CheckTypeOf AST.Expression where
             checkType inType expr1
             checkType inType expr2
             return (HasType outType)
-        AST.Call functionName arguments -> do
-            functionType <- lookupType functionName
+        AST.Call function arguments -> do
+            functionType <- inferType function
             case functionType of
                 HasType (Function argumentTypes returnType) -> do
                     when (length argumentTypes != length arguments) do
@@ -467,13 +465,13 @@ instance Validate AST.Expression where
         AST.TextLiteral _ -> do
             return ()
         AST.Call function args -> do
-            case typeOf (AST.Named function) of
+            case typeOf (nodeWithout function) of
                 Function argTypes _ -> do
                     when (length args != length argTypes) do
                         throwError (BadArgumentCount (length argTypes) (AST.Call function args))
                     zipWithM_ validateExpr argTypes args
                 _ -> do
-                    throwError (BadType ExpectedFunction (AST.Named function))
+                    throwError (BadType ExpectedFunction (nodeWithout function))
 
 instance Validate node => Validate (NodeWith node) where
     validate = validate . nodeWithout

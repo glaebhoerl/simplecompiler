@@ -192,10 +192,10 @@ instance ResolveNamesIn AST.Expression where
             resolvedExpr1 <- resolveNamesIn expr1
             resolvedExpr2 <- resolveNamesIn expr2
             return (AST.BinaryOperator resolvedExpr1 op resolvedExpr2)
-        AST.Call name exprs -> do
-            resolvedName  <- lookupName name
-            resolvedExprs <- mapM resolveNamesIn exprs
-            return (AST.Call resolvedName resolvedExprs)
+        AST.Call fn args -> do
+            resolvedFn   <- resolveNamesIn fn
+            resolvedArgs <- mapM resolveNamesIn args
+            return (AST.Call resolvedFn resolvedArgs)
         AST.NumberLiteral number -> do
             return (AST.NumberLiteral number)
         AST.TextLiteral text -> do
@@ -387,9 +387,9 @@ instance Validate AST.Expression where
             return ()
         AST.TextLiteral _ -> do
             return ()
-        AST.Call name exprs -> do
-            validateName name
-            mapM_ validate exprs
+        AST.Call fn args -> do
+            validate fn
+            mapM_ validate args
 
 instance Validate node => Validate (NodeWith node) where
     validate = validate . nodeWithout

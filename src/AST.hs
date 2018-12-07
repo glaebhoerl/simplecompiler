@@ -26,7 +26,7 @@ data Expression metadata name
     = Named
         name
     | Call
-        name -- TODO Expression!!
+        (NodeWith Expression metadata name)
         [NodeWith Expression metadata name]
     | NumberLiteral
         Integer
@@ -81,7 +81,7 @@ data Block metadata name = Block {
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Argument metadata name = Argument {
-    argumentName :: name, -- TODO we also want metadata here for name conflict errors... keep names and types in separate lists??
+    argumentName :: name,
     argumentType :: NodeWith Type metadata name
 } deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
@@ -180,13 +180,17 @@ expressionGrammar = mdo
             liftA1 Named         (tokenConstructor @"Name"),
             liftA1 NumberLiteral (tokenConstructor @"Number"),
             liftA1 TextLiteral   (tokenConstructor @"Text"),
-            liftA2 Call          (tokenConstructor @"Name") (bracketed T.Round (separatedBy T.Comma expression)),
             liftA1 nodeWithout   (bracketed T.Round expression)
+        ]
+    call <- (locatedNode . oneOf)
+        [
+            liftA2 Call        call (bracketed T.Round (separatedBy T.Comma expression)),
+            liftA1 nodeWithout atom
         ]
     unary <- (locatedNode . oneOf)
         [
-            liftA2 UnaryOperator (tokenConstructor @"UnaryOperator") atom,
-            liftA1 nodeWithout atom
+            liftA2 UnaryOperator (tokenConstructor @"UnaryOperator") unary,
+            liftA1 nodeWithout call
         ]
     binaries <- (nodeRule . oneOf)
         [
@@ -328,8 +332,8 @@ instance RenderName name => Render (Expression metadata name) where
     render = \case
         Named name ->
             renderName P.Use name
-        Call name args ->
-            renderName P.Use name ++ P.parens (P.hsep (P.punctuate "," (map render args)))
+        Call fn args ->
+            render fn ++ P.parens (P.hsep (P.punctuate "," (map render args)))
         NumberLiteral number->
             P.number number
         TextLiteral text ->

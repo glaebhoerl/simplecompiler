@@ -180,9 +180,10 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
         value2 <- translateTemporary expr2
         name   <- emitNamedLet (BinaryOperator value1 op value2)
         return (Named name)
-    AST.Call function exprs -> do
-        values <- mapM translateTemporary exprs
-        name   <- emitNamedLet (Call (Named (translateName function)) values)
+    AST.Call fn args -> do
+        fnValue   <- translateTemporary fn
+        argValues <- mapM translateTemporary args
+        name      <- emitNamedLet (Call fnValue argValues)
         return (Named name)
 
 translateStatement :: TranslateM m => NodeWith AST.Statement metadata Type.TypedName -> m ()
@@ -367,7 +368,7 @@ instance TranslateM Translate where
                 modifyM (field @"innermostBlock") (assert . enclosingBlock)
                 parentEmittedTransfer <- getM (blockField @"emittedTransfer")
                 case parentEmittedTransfer of
-                    Just parentTransfer -> do
+                    Just _ -> do
                         (modifyM (blockField @"statements") . map) \case
                             BlockDecl name _ | name == currentBlockName ->
                                 BlockDecl currentBlockName finishedBlock
