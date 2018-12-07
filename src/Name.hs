@@ -18,6 +18,7 @@ data BuiltinName
     = Builtin_Int
     | Builtin_Bool
     | Builtin_Text
+    | Builtin_Unit
     | Builtin_ask
     | Builtin_say
     | Builtin_write
@@ -101,6 +102,10 @@ instance ResolveNamesIn AST.Type where
         AST.NamedType name -> do
             resolvedName <- lookupName name
             return (AST.NamedType resolvedName)
+        AST.FunctionType parameters returns -> do
+            resolvedParameters <- mapM resolveNamesIn parameters
+            resolvedReturns    <- resolveNamesIn returns
+            return (AST.FunctionType resolvedParameters resolvedReturns)
 
 instance ResolveNamesIn AST.Function where
     resolveNamesIn AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
@@ -314,6 +319,9 @@ instance Validate AST.Type where
     validate = \case
         AST.NamedType name -> do
             validateName name
+        AST.FunctionType parameters returns -> do
+            mapM_ validate parameters
+            validate returns
 
 instance Validate AST.Function where
     validate function = do

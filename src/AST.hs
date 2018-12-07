@@ -15,15 +15,18 @@ import Pretty (Render, render)
 ----------------------------------------------------------------------------- types
 
 data Type metadata name
-    = NamedType name
-    -- TODO: add FunctionType
+    = NamedType
+        name
+    | FunctionType
+        [NodeWith Type metadata name]
+        (NodeWith Type metadata name)
     deriving (Generic, Eq, Show, Functor, Foldable, Traversable)
 
 data Expression metadata name
     = Named
         name
     | Call
-        name
+        name -- TODO Expression!!
         [NodeWith Expression metadata name]
     | NumberLiteral
         Integer
@@ -251,12 +254,21 @@ blockGrammar = mdo
         return Block { exitTarget = Nothing, statements }
     return block
 
+typeGrammar :: Grammar r (NodeWith Type)
+typeGrammar = mdo
+    functionType <- nodeRule do
+        keyword T.K_function
+        parameters <- bracketed T.Round (separatedBy T.Comma type')
+        keyword T.K_returns
+        returns <- type'
+        return (FunctionType parameters returns)
+    type' <- locatedNode (oneOf [liftA1 NamedType (tokenConstructor @"Name"), functionType])
+    return type'
+
 functionGrammar :: Grammar r (NodeWith Function)
 functionGrammar = do
     block <- blockGrammar
-    type' <- locatedNode do
-        typeName <- tokenConstructor @"Name"
-        return (NamedType typeName)
+    type' <- typeGrammar
     argument <- locatedNode do
         argumentName <- tokenConstructor @"Name"
         token T.Colon
@@ -295,26 +307,37 @@ parse = checkResult . E.fullParses parser where
 ----------------------------------------------------------------------------- pretty-printing
 
 renderBlock :: RenderName name => NodeWith Block metadata name -> P.Document
-renderBlock block = P.braces (P.nest 4 (P.hardline ++ render block) ++ P.hardline)
+renderBlock block =
+    P.braces (P.nest 4 (P.hardline ++ render block) ++ P.hardline)
 
 class RenderName name where
     renderName :: P.DefinitionOrUse -> name -> P.Document
 
 instance RenderName Text where
-    renderName defOrUse name = P.note (P.Identifier (P.IdentInfo name defOrUse P.Unknown False)) (P.pretty name)
+    renderName defOrUse name =
+        P.note (P.Identifier (P.IdentInfo name defOrUse P.Unknown False)) (P.pretty name)
 
 instance RenderName name => Render (Type metadata name) where
     render = \case
-        NamedType name -> renderName P.Use name
+        NamedType name ->
+            renderName P.Use name
+        FunctionType parameters returns ->
+            P.keyword "function" ++ P.parens (P.hsep (P.punctuate "," (map render parameters))) ++ " " ++ P.keyword "returns" ++ " " ++ render returns
 
 instance RenderName name => Render (Expression metadata name) where
     render = \case
-        Named          name           -> renderName P.Use name
-        Call           name args      -> renderName P.Use name ++ P.parens (P.hsep (P.punctuate "," (map render args)))
-        NumberLiteral  number         -> P.number number
-        TextLiteral    text           -> P.string text
-        UnaryOperator  op expr        -> P.unaryOperator op ++ render expr
-        BinaryOperator expr1 op expr2 -> render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ render expr2
+        Named name ->
+            renderName P.Use name
+        Call name args ->
+            renderName P.Use name ++ P.parens (P.hsep (P.punctuate "," (map render args)))
+        NumberLiteral number->
+            P.number number
+        TextLiteral text ->
+            P.string text
+        UnaryOperator op expr->
+            P.unaryOperator op ++ render expr
+        BinaryOperator expr1 op expr2 ->
+            render expr1 ++ " " ++ P.binaryOperator op ++ " " ++ render expr2
 
 instance Render BindingType where
     render = P.keyword . \case
@@ -323,28 +346,40 @@ instance Render BindingType where
 
 instance RenderName name => Render (Statement metadata name) where
     render = \case
-        Binding    btype name expr    -> render btype ++ " " ++ renderName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ render expr ++ P.semicolon
-        Assign     name expr          -> renderName P.Use name ++ " " ++ P.assignEquals ++ " " ++ render expr ++ P.semicolon
-        IfThen     expr block         -> P.keyword "if"      ++ " " ++ render expr ++ " " ++ renderBlock block
-        IfThenElse expr block1 block2 -> render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
-        Forever    block              -> P.keyword "forever" ++ " " ++ renderBlock block
-        While      expr block         -> P.keyword "while"   ++ " " ++ render expr ++ " " ++ renderBlock block
-        Return     _    maybeExpr     -> P.keyword "return"  ++ (maybe "" (\expr -> " " ++ render expr) maybeExpr) ++ P.semicolon
-        Break      _                  -> P.keyword "break"   ++ P.semicolon
-        Expression expr               -> render expr       ++ P.semicolon
+        Binding btype name expr ->
+            render btype ++ " " ++ renderName P.Definition name ++ " " ++ P.defineEquals ++ " " ++ render expr ++ P.semicolon
+        Assign name expr ->
+            renderName P.Use name ++ " " ++ P.assignEquals ++ " " ++ render expr ++ P.semicolon
+        IfThen expr block ->
+            P.keyword "if" ++ " " ++ render expr ++ " " ++ renderBlock block
+        IfThenElse expr block1 block2 ->
+            render (IfThen expr block1) ++ " " ++ P.keyword "else" ++ " " ++ renderBlock block2
+        Forever block ->
+            P.keyword "forever" ++ " " ++ renderBlock block
+        While expr block ->
+            P.keyword "while" ++ " " ++ render expr ++ " " ++ renderBlock block
+        Return _ maybeExpr ->
+            P.keyword "return" ++ (maybe "" (\expr -> " " ++ render expr) maybeExpr) ++ P.semicolon
+        Break _ ->
+            P.keyword "break" ++ P.semicolon
+        Expression expr ->
+            render expr ++ P.semicolon
 
 instance RenderName name => Render (Block metadata name) where
-    render Block { statements } = mconcat (P.punctuate P.hardline (map render statements))
+    render Block { statements } =
+        mconcat (P.punctuate P.hardline (map render statements))
 
 instance RenderName name => Render (Argument metadata name) where
-    render Argument { argumentName, argumentType } = renderName P.Definition argumentName ++ P.colon ++ " " ++ render argumentType
+    render Argument { argumentName, argumentType } =
+        renderName P.Definition argumentName ++ P.colon ++ " " ++ render argumentType
 
 instance RenderName name => Render (Function metadata name) where
-    render Function { functionName, arguments, returns, body } = renderedHead ++ renderedArguments ++ renderedReturns ++ renderedBody where
-        renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
-        renderedArguments = P.parens (P.hsep (P.punctuate "," (map render arguments)))
-        renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ render returnType) returns
-        renderedBody      = P.hardline ++ renderBlock body
+    render Function { functionName, arguments, returns, body } =
+        renderedHead ++ renderedArguments ++ renderedReturns ++ renderedBody where
+            renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
+            renderedArguments = P.parens (P.hsep (P.punctuate "," (map render arguments)))
+            renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ render returnType) returns
+            renderedBody      = P.hardline ++ renderBlock body
 
 instance RenderName name => Render (AST metadata name) where
     render = mconcat . P.punctuate P.hardline . map render

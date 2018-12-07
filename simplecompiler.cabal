@@ -109,7 +109,10 @@ executable simplecompiler
                        regex-applicative,
                        srcloc,
                        text
-  ghc-options:         -O -W -Wall -Wcompat -Wincomplete-uni-patterns -Wincomplete-record-updates -Wredundant-constraints
+  ghc-options:         -O
+                       -W -Wall -Wcompat
+                       -Wincomplete-uni-patterns -Wincomplete-record-updates -Wredundant-constraints
+                       -Wno-name-shadowing
 
 source-repository head
   type:     git

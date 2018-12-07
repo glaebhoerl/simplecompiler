@@ -246,8 +246,8 @@ translateStatements = mapM_ translateStatement . AST.statements .  nodeWithout
 translateName :: Type.TypedName -> Name
 translateName (Name.NameWith name ty) = Name (ASTName name) (translatedType ty) (Name.unqualifiedName name) where
     translatedType = \case
-        Type.SmallType ty -> ty
-        Type.Type         -> bug "Use of typename as local"
+        Type.HasType ty -> ty
+        Type.IsType  _  -> bug "Use of typename as local"
 
 -- TODO it's not clear in when we should copy the `unqualifiedName` as the `description` and when not...?
 -- right now it's inconsistent between lets and blocks
@@ -255,8 +255,8 @@ translateName (Name.NameWith name ty) = Name (ASTName name) (translatedType ty) 
 translateBlockName :: Type.TypedName -> BlockName
 translateBlockName (Name.NameWith name ty) = Name (ASTName name) (translatedType ty) "" where
     translatedType = \case
-        Type.SmallType ty -> BlockType [ty]
-        Type.Type         -> bug "Use of typename as exit target"
+        Type.HasType ty -> BlockType [ty]
+        Type.IsType  _  -> bug "Use of typename as exit target"
 
 translateFunction :: AST.Function metadata Type.TypedName -> Function
 translateFunction AST.Function { AST.functionName, AST.arguments, AST.body = functionBody } = result where
