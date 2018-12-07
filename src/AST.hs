@@ -322,18 +322,20 @@ instance RenderName Text where
         P.note (P.Identifier (P.IdentInfo name defOrUse P.Unknown False)) (P.pretty name)
 
 instance RenderName name => Render (Type metadata name) where
+    listSeparator = ", "
     render = \case
         NamedType name ->
             renderName P.Use name
         FunctionType parameters returns ->
-            P.keyword "function" ++ P.parens (P.hsep (P.punctuate "," (map render parameters))) ++ " " ++ P.keyword "returns" ++ " " ++ render returns
+            P.keyword "function" ++ P.parens (render parameters) ++ " " ++ P.keyword "returns" ++ " " ++ render returns
 
 instance RenderName name => Render (Expression metadata name) where
+    listSeparator = ", "
     render = \case
         Named name ->
             renderName P.Use name
         Call fn args ->
-            render fn ++ P.parens (P.hsep (P.punctuate "," (map render args)))
+            render fn ++ P.parens (render args)
         NumberLiteral number->
             P.number number
         TextLiteral text ->
@@ -370,10 +372,10 @@ instance RenderName name => Render (Statement metadata name) where
             render expr ++ P.semicolon
 
 instance RenderName name => Render (Block metadata name) where
-    render Block { statements } =
-        mconcat (P.punctuate P.hardline (map render statements))
+    render Block { statements } = render statements
 
 instance RenderName name => Render (Argument metadata name) where
+    listSeparator = ", "
     render Argument { argumentName, argumentType } =
         renderName P.Definition argumentName ++ P.colon ++ " " ++ render argumentType
 
@@ -381,9 +383,6 @@ instance RenderName name => Render (Function metadata name) where
     render Function { functionName, arguments, returns, body } =
         renderedHead ++ renderedArguments ++ renderedReturns ++ renderedBody where
             renderedHead      = P.keyword "function" ++ " " ++ renderName P.Definition functionName
-            renderedArguments = P.parens (P.hsep (P.punctuate "," (map render arguments)))
+            renderedArguments = P.parens (render arguments)
             renderedReturns   = maybe "" (\returnType -> " " ++ P.keyword "returns" ++ " " ++ render returnType) returns
             renderedBody      = P.hardline ++ renderBlock body
-
-instance RenderName name => Render (AST metadata name) where
-    render = mconcat . P.punctuate P.hardline . map render

@@ -61,6 +61,7 @@ typeOf = \case
 ------------------------------------------------------------------------ pretty-printing
 
 instance P.Render TypeInfo where
+    listSeparator = ", "
     render ty = P.note (P.Identifier (P.IdentInfo (typeText ty) P.Use P.Type True)) (P.pretty (typeText ty)) where
         typeText = \case
             HasType (Function argumentTypes returnType) ->
@@ -71,6 +72,7 @@ instance P.Render TypeInfo where
             IsType  _         -> "Type"
 
 instance P.Render Type where
+    listSeparator = ", "
     render = P.render . HasType
 
 instance AST.RenderName TypedName where

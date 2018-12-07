@@ -10,7 +10,6 @@ import qualified System.Directory as Directory
 import qualified System.Exit      as Exit
 import qualified System.Process   as Process
 import qualified Foreign.Ptr      as Ptr
-import qualified Data.ByteString  as ByteString
 
 import qualified LLVM.Analysis        as L
 import qualified LLVM.Context         as L

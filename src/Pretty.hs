@@ -162,23 +162,31 @@ class Render a where
     render :: a -> Document
     outputWithStyle :: (Info -> Style) -> Handle -> a -> IO ()
     outputWithStyle style handle = PT.hPutDoc handle . fmap (ansiStyle . style) . render
+    listSeparator :: Document
+    listSeparator = P.hardline
 
 output :: Render a => Handle -> a -> IO ()
 output = outputWithStyle defaultStyle
 
 instance Render Text where
-    render = P.pretty
+    render            = P.pretty
     outputWithStyle _ = hPutStr
 
 instance Render ByteString where
-    render = P.pretty . byteStringToText
+    render            = P.pretty . byteStringToText
     outputWithStyle _ = Data.ByteString.hPutStr
 
-instance Render a => Render (With metadata a) where
-    render = render . unWith
+instance forall metadata a. Render a => Render (With metadata a) where
+    render        = render . unWith
+    listSeparator = listSeparator @a
 
-instance Render (node metadata a) => Render (NodeWith node metadata a) where
-    render = render . nodeWithout
+instance forall node metadata a. Render (node metadata a) => Render (NodeWith node metadata a) where
+    render        = render . nodeWithout
+    listSeparator = listSeparator @(node metadata a)
+
+instance forall a. Render a => Render [a] where
+    render        = mconcat . P.punctuate (listSeparator @a) . map render
+    listSeparator = listSeparator @a
 
 ansiStyle :: Style -> PT.AnsiStyle
 ansiStyle Style { color, isDull, isBold, isItalic, isUnderlined } = style where

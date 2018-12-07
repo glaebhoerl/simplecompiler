@@ -637,27 +637,23 @@ identText = \case
     ID      i -> showText i
 
 renderBody :: [Statement] -> Transfer -> P.Document
-renderBody statements transfer = P.hardline ++ P.braces (P.nest 4 (P.hardline ++ mconcat (P.punctuate P.hardline (map render statements ++ [render transfer]))) ++ P.hardline)
-
-argumentList :: [Name] -> P.Document
-argumentList = P.parens . P.hsep . P.punctuate "," . map render
+renderBody statements transfer = P.hardline ++ P.braces (P.nest 4 (P.hardline ++ render statements ++ P.hardline ++ render transfer) ++ P.hardline)
 
 -- we could probably refactor all these further but...
 
 instance Render ID where
+    listSeparator = ", "
     render = P.pretty . identText
 
 -- NOTE `instance Render Type` is provided by `module Type`
 
 instance Render Name where
+    listSeparator = ", "
     render name = letId P.Definition name ++ P.colon ++ " " ++ render (nameType name)
-
-instance Render [Function] where
-    render = mconcat . P.punctuate P.hardline . map render
 
 instance Render Function where
     render function@Function { functionBody, returnBlock } =
-        P.keyword "function" ++ " " ++ letId P.Definition (functionName function) ++ argumentList (arguments functionBody) ++ " " ++ P.keyword "returns" ++ " " ++ render returnType ++
+        P.keyword "function" ++ " " ++ letId P.Definition (functionName function) ++ P.parens (render (arguments functionBody)) ++ " " ++ P.keyword "returns" ++ " " ++ render returnType ++
          renderBody (body functionBody) (transfer functionBody)
         where returnType = assert (head (parameters (nameType returnBlock)))
 
@@ -666,31 +662,35 @@ instance Render Block where
 
 instance Render Statement where
     render = \case
-        BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ argumentList (arguments block) ++ renderBody (body block) (transfer block)
+        BlockDecl name block -> P.keyword "block" ++ " " ++ blockId P.Definition name ++ P.parens (render (arguments block)) ++ renderBody (body block) (transfer block)
         Let       name expr  -> P.keyword "let"   ++ " " ++ render name ++ " " ++ P.defineEquals ++ " " ++ render expr
         Assign    name value -> letId P.Use name  ++ " " ++ P.assignEquals ++ " " ++ render value
 
 instance Render Transfer where
     render = \case
         Jump         target  -> P.keyword "jump"   ++ " " ++ render target
-        Branch value targets -> P.keyword "branch" ++ " " ++ render value ++ " " ++ P.hsep (map render targets)
+        Branch value targets -> P.keyword "branch" ++ " " ++ render value ++ " " ++ render targets
 
 instance Render Target where
-    render target = blockId P.Use (targetBlock target) ++ P.parens (P.hsep (P.punctuate "," (map render (targetArgs target))))
+    listSeparator = " "
+    render target = blockId P.Use (targetBlock target) ++ P.parens (render (targetArgs target))
 
 instance Render Expression where
+    listSeparator = ", "
     render = \case
         Value          value            -> render value
         UnaryOperator  op value         -> P.unaryOperator op ++ render value
         BinaryOperator value1 op value2 -> render value1 ++ " " ++ P.binaryOperator op ++ " " ++ render value2
-        Call           fn args          -> render fn ++ P.parens (P.hsep (P.punctuate "," (map render args)))
+        Call           fn args          -> render fn ++ P.parens (render args)
 
 instance Render Value where
+    listSeparator = ", "
     render = \case
         Named   name    -> letId P.Use name
         Literal literal -> render literal
 
 instance Render Literal where
+    listSeparator = ", "
     render = \case
         Number num  -> P.number num
         String text -> P.string text

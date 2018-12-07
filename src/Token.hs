@@ -132,6 +132,7 @@ instance TextRepresentation Token where
         Semicolon              -> ";"
 
 instance P.Render Token where
+    listSeparator = " "
     render = \case
         Keyword        keyword -> P.keyword (toText keyword)
         BinaryOperator binop   -> P.binaryOperator binop
@@ -148,12 +149,6 @@ instance P.Render Token where
                 Round  -> P.Paren
                 Curly  -> P.Brace
                 Square -> P.Bracket
-
-instance P.Render [Token] where
-    render = P.hsep . map P.render
-
-instance P.Render [With Loc Token] where -- sighhh
-    render = P.hsep . map P.render
 
 type RE = RE.RE Char
 
