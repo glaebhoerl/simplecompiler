@@ -3,7 +3,6 @@ module Name (BuiltinName (..), LocalName (..), Name (..), qualifiedName, unquali
 import MyPrelude
 
 import qualified Data.Map  as Map
-import qualified Data.Set  as Set
 import qualified Data.Text as Text
 
 import qualified Pretty as P
@@ -89,10 +88,13 @@ instance AST.RenderName ResolvedName where
 ------------------------------------------------------------------------ resolution frontend
 
 class (forall metadata. Monad (m metadata)) => NameResolveM m where
-    lookupName     :: Text -> m metadata ResolvedName
-    enterScope     :: m metadata a -> m metadata a
-    bindName       :: AST.BindingType -> Text -> m metadata ResolvedName
-    recordMetadata :: metadata -> m metadata ()
+    lookupName    :: Text -> m metadata ResolvedName
+    enterScope    :: m metadata a -> m metadata a
+    bindName      :: AST.BindingType -> Text -> m metadata ResolvedName
+    enterMetadata :: metadata -> m metadata a -> m metadata a
+
+enterMetadataOf :: NameResolveM m => NodeWith node metadata name -> m metadata a -> m metadata a
+enterMetadataOf = enterMetadata . nodeMetadata
 
 class ResolveNamesIn node where
     resolveNamesIn :: NameResolveM m => node metadata Text -> m metadata (node metadata ResolvedName)
@@ -111,14 +113,17 @@ instance ResolveNamesIn AST.Function where
     resolveNamesIn AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         -- the argument types and return type are in global scope, must be resolved before entering any scope
         argumentTypes <- forM arguments \argument -> do
-            (resolveNamesIn . AST.argumentType . nodeWithout) argument
+            enterMetadataOf argument do
+                (resolveNamesIn . AST.argumentType . nodeWithout) argument
         resolvedReturns <- mapM resolveNamesIn returns
+        bindName AST.Let functionName
         -- the argument names are in scope for the body, and may also be shadowed by it
         (resolvedArguments, resolvedBody) <- enterScope do
             resolvedArguments <- forM (zip argumentTypes arguments) \(resolvedType, argument) -> do
-                forNodeM argument \AST.Argument { AST.argumentName } -> do
-                    resolvedName <- bindName AST.Let argumentName
-                    return (AST.Argument resolvedName resolvedType)
+                enterMetadataOf argument do
+                    forNodeM argument \AST.Argument { AST.argumentName } -> do
+                        resolvedName <- bindName AST.Let argumentName
+                        return (AST.Argument resolvedName resolvedType)
             resolvedBody <- resolveNamesIn body
             return (resolvedArguments, resolvedBody)
         return AST.Function {
@@ -198,8 +203,8 @@ instance ResolveNamesIn AST.Expression where
 
 instance ResolveNamesIn node => ResolveNamesIn (NodeWith node) where
     resolveNamesIn node = do
-        recordMetadata (nodeMetadata node)
-        mapNodeM resolveNamesIn node
+        enterMetadataOf node do
+            mapNodeM resolveNamesIn node
 
 
 
@@ -215,20 +220,10 @@ newtype NameResolve metadata a = NameResolve {
 } deriving (Functor, Applicative, Monad, MonadState (Context metadata), MonadError Error)
 
 resolveNames :: AST metadata Text -> Either (With metadata Error) (AST metadata ResolvedName)
-resolveNames = plumbMetadata . runState (Context Set.empty "" [] Nothing) . runExceptT . runNameResolve . mapM resolveFunction where
+resolveNames = plumbMetadata . runState (Context [] [] []) . runExceptT . runNameResolve . mapM resolveNamesIn where
     plumbMetadata = \case
         (Right result, _      ) -> Right result
-        (Left  error,  context) -> Left (With (assert (metadata context)) error)
-
-resolveFunction :: NodeWith AST.Function metadata Text -> NameResolve metadata (NodeWith AST.Function metadata ResolvedName)
-resolveFunction = mapNodeM impl where
-    impl function@AST.Function { AST.functionName } = do
-        doModifyState \Context { functions, locals, metadata } -> do
-            assertEqM locals []
-            when (Set.member functionName functions) do
-                throwError (NameConflict functionName (Path functionName [])) -- TODO should be a nil path instead...?
-            return Context { functions = Set.insert functionName functions, currentFunction = functionName, locals, metadata }
-        resolveNamesIn function
+        (Left  error,  context) -> Left (With (assert (head (metadata context))) error)
 
 -- the stack of scopes we are currently inside
 -- fst: how many sub-scopes within that scope we have visited so far
@@ -236,11 +231,13 @@ resolveFunction = mapNodeM impl where
 type LocalContext = [(Int, Map Text AST.BindingType)]  -- TODO maybe use Natural and NonEmpty here
 
 data Context metadata = Context {
-    functions       :: Set Text,
-    currentFunction :: Text,
+    functions       :: [Text],
     locals          :: LocalContext,
-    metadata        :: Maybe metadata
+    metadata        :: [metadata]
 } deriving (Generic, Show)
+
+currentFunction :: Context metadata -> Text
+currentFunction = assert . head . functions
 
 lookupLocal :: Text -> LocalContext -> Maybe ([Int], AST.BindingType)
 lookupLocal name = \case
@@ -250,10 +247,10 @@ lookupLocal name = \case
         Nothing           -> lookupLocal name parent
 
 lookupInContext :: Text -> Context metadata -> Maybe ResolvedName
-lookupInContext givenName Context { functions, currentFunction, locals } = oneOf [tryLocal, tryFunction, tryBuiltin] where
+lookupInContext givenName context@Context { functions, locals } = oneOf [tryLocal, tryFunction, tryBuiltin] where
     tryLocal    = fmap makeLocalName (lookupLocal givenName locals) where
-        makeLocalName (scope, info) = NameWith { name = Name LocalName { path = Path { function = currentFunction, scope }, givenName }, info }
-    tryFunction = justIf (Set.member givenName functions) NameWith { name = FunctionName givenName, info = AST.Let }
+        makeLocalName (scope, info) = NameWith { name = Name LocalName { path = Path { function = currentFunction context, scope }, givenName }, info }
+    tryFunction =  justIf (elem givenName functions) NameWith { name = FunctionName givenName, info = AST.Let }
     tryBuiltin  = fmap makeBuiltinName (lookup ("Builtin_" ++ givenName) builtinNames) where
         builtinNames                = map (\builtinName -> (showText builtinName, builtinName)) (enumerate @BuiltinName)
         makeBuiltinName builtinName = NameWith { name = BuiltinName builtinName, info = AST.Let }
@@ -279,15 +276,24 @@ instance NameResolveM NameResolve where
 
     bindName info name = do
         context <- getState
-        case (locals context) of
-            [] -> bug "Attempted to bind a name when not in a scope!"
+        case locals context of
+            [] -> do
+                doModifyM (field @"functions") \functions -> do
+                    when (elem name functions) do
+                        throwError (NameConflict name (Path name [])) -- TODO should be a nil path instead...?
+                    return (prepend name functions)
+                return NameWith { name = FunctionName name, info }
             (scopeID, names) : rest -> do
                 when (Map.member name names) do
                     throwError (NameConflict name (Path (currentFunction context) (map fst (locals context))))
                 setM (field @"locals") ((scopeID, Map.insert name info names) : rest)
                 return NameWith { name = Name LocalName { path = Path { function = currentFunction context, scope = map fst rest }, givenName = name }, info }
 
-    recordMetadata = setM (field @"metadata") . Just
+    enterMetadata metadata action = do
+        modifyM (field @"metadata") (prepend metadata)
+        result <- action
+        modifyM (field @"metadata") (assert . tail)
+        return result
 
 
 
@@ -400,7 +406,7 @@ validateName (NameWith name info1) = do
             when (info1 != info2) do
                 throwError (InfoMismatch (NameWith name info1) (NameWith name info2))
 
-recordName :: Eq info => NameWith info -> ValidateM info ()
+recordName :: NameWith info -> ValidateM info ()
 recordName (NameWith name info) = do
     doModifyState \context -> do
         let scope = assert (head context)

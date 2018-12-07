@@ -111,10 +111,14 @@ data Expected
     deriving (Generic, Show)
 
 class (forall metadata. Monad (m metadata)) => TypeCheckM m where
-    recordType     :: Type -> ResolvedName -> m metadata () -- for now, the only things which are `IsType` are builtins
-    lookupType     :: ResolvedName         -> m metadata TypeInfo
-    reportError    :: Error                -> m metadata a
-    recordMetadata :: metadata             -> m metadata ()
+    recordType    :: Type -> ResolvedName     -> m metadata () -- for now, the only things which are `IsType` are builtins
+    lookupType    :: ResolvedName             -> m metadata TypeInfo
+    reportError   :: Error                    -> m metadata a
+    enterMetadata :: metadata -> m metadata a -> m metadata a
+
+-- TODO deduplicate?
+enterMetadataOf :: TypeCheckM m => NodeWith node metadata name -> m metadata a -> m metadata a
+enterMetadataOf = enterMetadata . nodeMetadata
 
 class CheckTypeOf node where
     inferType :: TypeCheckM m => node metadata ResolvedName -> m metadata TypeInfo
@@ -215,15 +219,18 @@ checkBlock exitTargetType block = do
     checkUnit block
 
 resolveAsType :: TypeCheckM m => NodeWith AST.Type metadata ResolvedName -> m metadata Type
-resolveAsType = liftM (msgAssert "type annotation resolved to a non-type" . match @"IsType") . inferType . nodeWithout
+resolveAsType typeNode = enterMetadataOf typeNode do
+    resolved <- inferType (nodeWithout typeNode)
+    return (msgAssert "type annotation resolved to a non-type" (match @"IsType" resolved))
 
 instance CheckTypeOf AST.Function where
     checkUnit AST.Function { AST.functionName, AST.arguments, AST.returns, AST.body } = do
         argumentTypes <- forM arguments \argument -> do
-            let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
-            resolvedType <- resolveAsType argumentType
-            recordType resolvedType argumentName
-            return resolvedType
+            enterMetadataOf argument do
+                let AST.Argument { AST.argumentName, AST.argumentType } = nodeWithout argument
+                resolvedType <- resolveAsType argumentType
+                recordType resolvedType argumentName
+                return resolvedType
         maybeReturnType <- mapM resolveAsType returns
         let returnType = fromMaybe Unit maybeReturnType
         recordType (Function argumentTypes returnType) functionName
@@ -245,8 +252,8 @@ instance CheckTypeOf AST.Type where
 
 instance CheckTypeOf node => CheckTypeOf (NodeWith node) where
     inferType node = do
-        recordMetadata (nodeMetadata node)
-        inferType      (nodeWithout  node)
+        enterMetadataOf node do
+            inferType (nodeWithout node)
 
 data ControlFlow = ControlFlow {
     definitelyReturns :: Bool, -- guaranteed divergence also counts as "returning"
@@ -308,17 +315,17 @@ newtype TypeCheck metadata a = TypeCheck {
 
 data TypeCheckState metadata = TypeCheckState {
     types    :: Map Name TypeInfo,
-    metadata :: Maybe metadata
+    metadata :: [metadata]
 } deriving (Generic, Show)
 
 checkTypes :: AST metadata ResolvedName -> Either (With metadata Error) (AST metadata TypedName)
 checkTypes ast = pipeline ast where
     pipeline        = constructResult . runState initialState . runExceptT . runTypeCheck . mapM_ checkUnit
-    initialState    = TypeCheckState (Map.fromList builtinNames) Nothing
+    initialState    = TypeCheckState (Map.fromList builtinNames) []
     builtinNames    = map (\builtinName -> (Name.BuiltinName builtinName, inferBuiltin builtinName)) (enumerate @Name.BuiltinName)
     constructResult = \case
         (Right (),    TypeCheckState { types    }) -> Right (map (fmap (makeNameTyped types)) ast)
-        (Left  error, TypeCheckState { metadata }) -> Left  (With (assert metadata) error)
+        (Left  error, TypeCheckState { metadata }) -> Left  (With (assert (head metadata)) error)
     makeNameTyped types (NameWith name _) = NameWith name (assert (Map.lookup name types))
 
 instance TypeCheckM TypeCheck where
@@ -332,8 +339,11 @@ instance TypeCheckM TypeCheck where
         return (msgAssert "Name not found in types map!" (Map.lookup (Name.name name) typeMap))
     reportError err = do
         throwError err
-    recordMetadata = do
-        setM (field @"metadata") . Just
+    enterMetadata metadata action = do -- TODO maybe deduplicate this from here and `Name`?
+        modifyM (field @"metadata") (prepend metadata)
+        result <- action
+        modifyM (field @"metadata") (assert . tail)
+        return result
 
 inferBuiltin :: Name.BuiltinName -> TypeInfo
 inferBuiltin = \case
