@@ -18,6 +18,8 @@ data BuiltinName
     | Builtin_Bool
     | Builtin_Text
     | Builtin_Unit
+    | Builtin_true
+    | Builtin_false
     | Builtin_ask
     | Builtin_say
     | Builtin_write
@@ -116,7 +118,7 @@ instance ResolveNamesIn AST.Function where
             enterMetadataOf argument do
                 (resolveNamesIn . AST.argumentType . nodeWithout) argument
         resolvedReturns <- mapM resolveNamesIn returns
-        bindName AST.Let functionName
+        resolvedFunction <- bindName AST.Let functionName
         -- the argument names are in scope for the body, and may also be shadowed by it
         (resolvedArguments, resolvedBody) <- enterScope do
             resolvedArguments <- forM (zip argumentTypes arguments) \(resolvedType, argument) -> do
@@ -127,7 +129,7 @@ instance ResolveNamesIn AST.Function where
             resolvedBody <- resolveNamesIn body
             return (resolvedArguments, resolvedBody)
         return AST.Function {
-            AST.functionName = NameWith { name = FunctionName functionName, info = AST.Let }, -- the function itself is bound in `resolveFunction`
+            AST.functionName = resolvedFunction,
             AST.arguments    = resolvedArguments,
             AST.returns      = resolvedReturns,
             AST.body         = resolvedBody
@@ -178,7 +180,7 @@ instance ResolveNamesIn AST.Statement where
             resolvedExpr <- resolveNamesIn expr
             return (AST.Expression resolvedExpr)
 
--- We used to be able to do this as just ` mapM lookupName`, but that doesn't record metadata...
+-- We used to be able to do this as just `mapM lookupName`, but that doesn't record metadata...
 -- Wonder if we could do anything to make it work "automatically" again...
 instance ResolveNamesIn AST.Expression where
     resolveNamesIn = \case
@@ -231,9 +233,9 @@ resolveNames = plumbMetadata . runState (Context [] [] []) . runExceptT . runNam
 type LocalContext = [(Int, Map Text AST.BindingType)]  -- TODO maybe use Natural and NonEmpty here
 
 data Context metadata = Context {
-    functions       :: [Text],
-    locals          :: LocalContext,
-    metadata        :: [metadata]
+    functions :: [Text],
+    locals    :: LocalContext,
+    metadata  :: [metadata]
 } deriving (Generic, Show)
 
 currentFunction :: Context metadata -> Text
@@ -250,7 +252,7 @@ lookupInContext :: Text -> Context metadata -> Maybe ResolvedName
 lookupInContext givenName context@Context { functions, locals } = oneOf [tryLocal, tryFunction, tryBuiltin] where
     tryLocal    = fmap makeLocalName (lookupLocal givenName locals) where
         makeLocalName (scope, info) = NameWith { name = Name LocalName { path = Path { function = currentFunction context, scope }, givenName }, info }
-    tryFunction =  justIf (elem givenName functions) NameWith { name = FunctionName givenName, info = AST.Let }
+    tryFunction = justIf (elem givenName functions) NameWith { name = FunctionName givenName, info = AST.Let }
     tryBuiltin  = fmap makeBuiltinName (lookup ("Builtin_" ++ givenName) builtinNames) where
         builtinNames                = map (\builtinName -> (showText builtinName, builtinName)) (enumerate @BuiltinName)
         makeBuiltinName builtinName = NameWith { name = BuiltinName builtinName, info = AST.Let }
@@ -343,8 +345,8 @@ instance Validate AST.Function where
 instance Validate AST.Block where
     validate block = do
         modifyState (prepend Map.empty)
-        mapM_ recordName        (AST.exitTarget block)
-        mapM_ validate (AST.statements block)
+        mapM_ recordName (AST.exitTarget block)
+        mapM_ validate   (AST.statements block)
         modifyState (assert . tail)
         return ()
 

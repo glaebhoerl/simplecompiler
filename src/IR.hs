@@ -44,8 +44,8 @@ instance Ord (NameWithType nameType) where
     compare = compare `on` nameID
 
 data Literal
-    = Number Int64
-    | String Text
+    = Int  Int64
+    | Text Text
     | Unit
     deriving (Generic, Eq, Show)
 
@@ -99,8 +99,8 @@ functionName Function { functionID, functionBody, returnBlock } =
 typeOf :: Expression -> Type
 typeOf = \case
     Value (Literal literal)    -> case literal of
-        Number _               -> Type.Int
-        String _               -> Type.Text
+        Int  _                 -> Type.Int
+        Text _                 -> Type.Text
         Unit                   -> Type.Unit
     Value (Named name)         -> nameType name
     UnaryOperator Not      _   -> Type.Bool
@@ -141,7 +141,7 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
     AST.Named name -> do
         return (Named (translateName name))
     AST.NumberLiteral num -> do
-        let value = Literal (Number (fromIntegral num))
+        let value = Literal (Int (fromIntegral num))
         if isJust providedName
             then do
                 name <- emitNamedLet (Value value)
@@ -149,7 +149,7 @@ translateExpression providedName = let emitNamedLet = emitLet providedName in \c
             else do
                 return value
     AST.TextLiteral text -> do -- TODO refactor
-        let value = Literal (String text)
+        let value = Literal (Text text)
         if isJust providedName
             then do
                 name <- emitNamedLet (Value value)
@@ -692,6 +692,6 @@ instance Render Value where
 instance Render Literal where
     listSeparator = ", "
     render = \case
-        Number num  -> P.number num
-        String text -> P.string text
-        Unit        -> P.note (P.Literal P.Unit) "Unit"
+        Int  num  -> P.number num
+        Text text -> P.string text
+        Unit      -> P.note (P.Literal P.Unit) "Unit"

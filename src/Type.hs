@@ -16,8 +16,8 @@ import Name (Name, NameWith (NameWith), ResolvedName)
 ------------------------------------------------------------------------ types
 
 data TypeInfo
-    = IsType  Type
-    | HasType Type
+    = IsType  Type -- stored for names of types in type annotations
+    | HasType Type -- stored for value-level names
     deriving (Generic, Eq, Show)
 
 data Type
@@ -32,11 +32,10 @@ type TypedName = NameWith TypeInfo
 
 typeOf :: AST.Expression metadata TypedName -> Type
 typeOf = \case
-    AST.Named name -> case Name.info name of
-        HasType ty ->
-            ty
-        IsType _ ->
-            bug "Expression which IsType in typed AST"
+    AST.Named name ->
+        case Name.info name of
+            HasType ty -> ty
+            IsType  _  -> bug "Expression which IsType in typed AST"
     AST.NumberLiteral _ ->
         Int
     AST.TextLiteral _ ->
@@ -50,11 +49,10 @@ typeOf = \case
             ArithmeticOperator _ -> Int
             ComparisonOperator _ -> Bool
             LogicalOperator    _ -> Bool
-    AST.Call fn _ -> case typeOf (nodeWithout fn) of
-        Function _ returnType ->
-            returnType
-        _ ->
-            bug "Call of non-function in typed AST"
+    AST.Call fn _ ->
+        case typeOf (nodeWithout fn) of
+            Function _ returnType -> returnType
+            _                     -> bug "Call of non-function in typed AST"
 
 
 
@@ -97,7 +95,7 @@ instance AST.RenderName TypedName where
 -- TODO more info in here?
 data Error
     = TypeMismatch Expected TypeInfo
-    | WrongNumberOfArguments
+    | WrongNumberOfArguments -- (can we move this into Expected?)
     | FunctionWithoutReturn
     | AssignToLet
     | LiteralOutOfRange
@@ -111,7 +109,7 @@ data Expected
     deriving (Generic, Show)
 
 class (forall metadata. Monad (m metadata)) => TypeCheckM m where
-    recordType    :: Type -> ResolvedName     -> m metadata () -- for now, the only things which are `IsType` are builtins
+    recordType    :: Type -> ResolvedName     -> m metadata () -- records `HasType`; for now, the only things which are `IsType` are builtins
     lookupType    :: ResolvedName             -> m metadata TypeInfo
     reportError   :: Error                    -> m metadata a
     enterMetadata :: metadata -> m metadata a -> m metadata a
@@ -347,10 +345,12 @@ instance TypeCheckM TypeCheck where
 
 inferBuiltin :: Name.BuiltinName -> TypeInfo
 inferBuiltin = \case
-    Name.Builtin_Int   -> IsType Int
-    Name.Builtin_Bool  -> IsType Bool
-    Name.Builtin_Text  -> IsType Text
-    Name.Builtin_Unit  -> IsType Unit
+    Name.Builtin_Int   -> IsType  Int
+    Name.Builtin_Bool  -> IsType  Bool
+    Name.Builtin_Text  -> IsType  Text
+    Name.Builtin_Unit  -> IsType  Unit
+    Name.Builtin_true  -> HasType Bool
+    Name.Builtin_false -> HasType Bool
     Name.Builtin_ask   -> HasType (Function [Text] Int)
     Name.Builtin_say   -> HasType (Function [Text] Unit)
     Name.Builtin_write -> HasType (Function [Int]  Unit)
@@ -381,7 +381,7 @@ validateTypes :: AST metadata TypedName -> Either (ValidationError metadata) ()
 validateTypes = runExcept . mapM_ validate
 
 validateAnnotation :: Type -> AST.Type metadata TypedName -> ValidateM metadata ()
-validateAnnotation = curry `strictly` \case -- FIXME
+validateAnnotation = curry \case
     (expected@(Function expectedParams expectedReturns), annotated@(AST.FunctionType annotatedParams annotatedReturns)) -> do
         when (length expectedParams != length annotatedParams) do
             throwError (BadAnnotation expected annotated)

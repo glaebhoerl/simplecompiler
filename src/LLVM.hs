@@ -138,9 +138,9 @@ store name operand = do
 translateValue :: LLVM m => IR.Value -> m Operand
 translateValue = \case
     IR.Literal literal -> case literal of
-        IR.Number num -> do
+        IR.Int num -> do
             return (number (Bits 64) (fromIntegral num))
-        IR.String text -> do
+        IR.Text text -> do
             translateStringLiteral text
     IR.Named name -> do
         load name
